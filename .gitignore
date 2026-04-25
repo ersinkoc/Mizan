@@ -1,0 +1,10 @@
+.DS_Store
+dist/
+webui/dist/
+webui/node_modules/
+webui/*.tsbuildinfo
+webui/vite.config.js
+webui/vite.config.d.ts
+coverage/
+*.log
+.env
