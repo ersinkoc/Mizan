@@ -101,7 +101,7 @@ cd webui
 npm run lint
 npm run test:coverage
 npm run build
-npm audit --omit=dev
+npm audit
 ```
 
 Current verified gates:
@@ -113,8 +113,8 @@ Current verified gates:
 | Frontend core statement coverage | 100% |
 | Frontend core function coverage | 100% |
 | Frontend core line coverage | 100% |
-| Frontend core branch coverage | 95.58% |
-| Production dependency audit | 0 vulnerabilities |
+| Frontend core branch coverage | 95.89% |
+| Full npm audit | 0 vulnerabilities |
 
 Frontend coverage is scoped to `webui/src/lib/**/*.ts` in `webui/vitest.config.ts`; backend coverage is measured across `./...`.
 

@@ -502,7 +502,7 @@ flowchart TB
   Tests["Automated tests"]
   Go["Go test suite\nPASS"]
   FE["Frontend Vitest\nPASS"]
-  FECoverage["Frontend core coverage\n100% statements\n100% functions\n100% lines\n95.58% branches"]
+  FECoverage["Frontend core coverage\n100% statements\n100% functions\n100% lines\n95.89% branches"]
   GoCoverage["Go total coverage\n100.0% statements"]
 
   Tests --> Go
@@ -519,7 +519,7 @@ go tool cover -func dist/coverage.out
 npm run lint
 npm run test:coverage
 npm run build
-npm audit --omit=dev
+npm audit
 ```
 
 Current coverage state:
@@ -529,10 +529,10 @@ Current coverage state:
 | Go test pass rate | 100% |
 | Go total statement coverage | 100.0% |
 | Frontend core statement coverage | 100% |
-| Frontend core branch coverage | 95.58% |
+| Frontend core branch coverage | 95.89% |
 | Frontend core function coverage | 100% |
 | Frontend core line coverage | 100% |
-| Production dependency audit | 0 vulnerabilities |
+| Full npm audit | 0 vulnerabilities |
 
 ## Implemented Capabilities
 
