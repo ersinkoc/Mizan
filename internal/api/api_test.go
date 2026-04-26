@@ -48,7 +48,7 @@ func TestProjectLifecycleEndpoints(t *testing.T) {
 	id := created.Project.ID
 	version := created.Version
 	res = doJSON(mux, http.MethodGet, "/metrics", nil)
-	if res.Code != http.StatusOK || res.Header().Get("Content-Type") != "text/plain; version=0.0.4; charset=utf-8" || !bytes.Contains(res.Body.Bytes(), []byte("mizan_build_info")) || !bytes.Contains(res.Body.Bytes(), []byte("mizan_projects_total 1")) {
+	if res.Code != http.StatusOK || res.Header().Get("Content-Type") != "text/plain; version=0.0.4; charset=utf-8" || !bytes.Contains(res.Body.Bytes(), []byte("mizan_build_info")) || !bytes.Contains(res.Body.Bytes(), []byte("mizan_projects_total 1")) || !bytes.Contains(res.Body.Bytes(), []byte("mizan_http_requests_total")) {
 		t.Fatalf("metrics status=%d type=%q body=%s", res.Code, res.Header().Get("Content-Type"), res.Body.String())
 	}
 

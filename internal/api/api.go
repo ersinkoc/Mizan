@@ -15,6 +15,7 @@ import (
 	"github.com/mizanproxy/mizan/internal/ir"
 	"github.com/mizanproxy/mizan/internal/ir/parser"
 	"github.com/mizanproxy/mizan/internal/monitor"
+	"github.com/mizanproxy/mizan/internal/observe"
 	"github.com/mizanproxy/mizan/internal/store"
 	"github.com/mizanproxy/mizan/internal/validate"
 	"github.com/mizanproxy/mizan/internal/version"
@@ -96,6 +97,7 @@ func (h *Handler) metrics(w http.ResponseWriter, r *http.Request) {
 	_, _ = fmt.Fprintf(w, "# HELP mizan_projects_total Number of projects visible in the configured data root.\n")
 	_, _ = fmt.Fprintf(w, "# TYPE mizan_projects_total gauge\n")
 	_, _ = fmt.Fprintf(w, "mizan_projects_total %d\n", len(projects))
+	observe.WriteHTTPMetrics(w)
 }
 
 func prometheusLabelValue(value string) string {
