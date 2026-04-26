@@ -116,6 +116,21 @@ func TestProjectGenerateValidateAndSnapshotCommands(t *testing.T) {
 		t.Fatalf("target list output unexpected: %s", stdout.String())
 	}
 	stdout.Reset()
+	if err := Run(context.Background(), []string{"project", "export", "--home", home, created.Project.ID}, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(stdout.Bytes(), []byte(`"format_version": 1`)) || !bytes.Contains(stdout.Bytes(), []byte("edge-01b")) {
+		t.Fatalf("project export output unexpected: %s", stdout.String())
+	}
+	exportPath := filepath.Join(t.TempDir(), "mizan-export.json")
+	stdout.Reset()
+	if err := Run(context.Background(), []string{"project", "export", "--home", home, "--out", exportPath, created.Project.ID}, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(exportPath); err != nil || !bytes.Contains(data, []byte(`"targets"`)) {
+		t.Fatalf("project export file unexpected data=%q err=%v", string(data), err)
+	}
+	stdout.Reset()
 	if err := Run(context.Background(), []string{"cluster", "add", "--home", home, "--project", created.Project.ID, "--name", "prod", "--target-ids", target.ID, "--parallelism", "2"}, &stdout, &stderr); err != nil {
 		t.Fatal(err)
 	}
@@ -276,6 +291,9 @@ func TestCLIErrorBranches(t *testing.T) {
 	expectErr("project", "import", "--home", home, filepath.Join(t.TempDir(), "missing.cfg"))
 	expectErr("project", "import", "--home", home, badCfg)
 	expectErr("project", "import", "--home", rootFile, goodCfg)
+	expectErr("project", "export", "--bad")
+	expectErr("project", "export", "--home", home)
+	expectErr("project", "export", "--home", home, "missing")
 	expectErr("project", "unknown")
 
 	expectErr("snapshot")
@@ -349,6 +367,32 @@ func TestCLIErrorBranches(t *testing.T) {
 		} `json:"project"`
 	}
 	if err := json.Unmarshal(stdout.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	missingDirExport := filepath.Join(t.TempDir(), "missing", "mizan-export.json")
+	expectErr("project", "export", "--home", home, "--out", missingDirExport, created.Project.ID)
+	stdout.Reset()
+	if err := Run(context.Background(), []string{"project", "export", "--home", home, created.Project.ID}, errWriter{}, &stderr); err == nil {
+		t.Fatal("expected export writer error")
+	}
+	configPath := filepath.Join(home, "projects", created.Project.ID, "config.json")
+	originalConfig, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(configPath); err != nil {
+		t.Fatal(err)
+	}
+	expectErr("project", "export", "--home", home, created.Project.ID)
+	if err := os.WriteFile(configPath, originalConfig, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	targetsPath := filepath.Join(home, "projects", created.Project.ID, "targets.json")
+	if err := os.WriteFile(targetsPath, []byte("{bad json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	expectErr("project", "export", "--home", home, created.Project.ID)
+	if err := os.Remove(targetsPath); err != nil {
 		t.Fatal(err)
 	}
 	expectErr("generate", "--home", home, "--project", created.Project.ID, "--target", "bad")

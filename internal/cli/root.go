@@ -38,6 +38,15 @@ var (
 	}
 )
 
+type projectExport struct {
+	FormatVersion int               `json:"format_version"`
+	ExportedAt    time.Time         `json:"exported_at"`
+	Project       store.ProjectMeta `json:"project"`
+	IR            *ir.Model         `json:"ir"`
+	Version       string            `json:"version"`
+	Targets       store.TargetsFile `json:"targets"`
+}
+
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
 		return serve(ctx, nil, stdout, stderr)
@@ -101,7 +110,7 @@ func serve(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 
 func project(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		_, _ = fmt.Fprintln(stderr, "usage: mizan project new|list|delete|import")
+		_, _ = fmt.Fprintln(stderr, "usage: mizan project new|list|delete|import|export")
 		return errors.New("missing project command")
 	}
 	switch args[0] {
@@ -175,9 +184,60 @@ func project(ctx context.Context, args []string, stdout, stderr io.Writer) error
 			return err
 		}
 		return json.NewEncoder(stdout).Encode(map[string]any{"project": meta, "version": version})
+	case "export":
+		fs := flag.NewFlagSet("project export", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		home := fs.String("home", store.DefaultRoot(), "Mizan data directory")
+		out := fs.String("out", "", "write export JSON to file")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if fs.NArg() != 1 {
+			return errors.New("project id is required")
+		}
+		payload, err := exportProjectPayload(ctx, store.New(*home), fs.Arg(0))
+		if err != nil {
+			return err
+		}
+		if *out != "" {
+			f, err := os.Create(*out)
+			if err != nil {
+				return err
+			}
+			defer f.Close()
+			encoder := json.NewEncoder(f)
+			encoder.SetIndent("", "  ")
+			return encoder.Encode(payload)
+		}
+		encoder := json.NewEncoder(stdout)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(payload)
 	default:
 		return fmt.Errorf("unknown project command %q", args[0])
 	}
+}
+
+func exportProjectPayload(ctx context.Context, st *store.Store, id string) (projectExport, error) {
+	meta, err := st.GetProject(ctx, id)
+	if err != nil {
+		return projectExport{}, err
+	}
+	model, version, err := st.GetIR(ctx, id)
+	if err != nil {
+		return projectExport{}, err
+	}
+	targets, err := st.ListTargets(ctx, id)
+	if err != nil {
+		return projectExport{}, err
+	}
+	return projectExport{
+		FormatVersion: 1,
+		ExportedAt:    time.Now().UTC(),
+		Project:       meta,
+		IR:            model,
+		Version:       version,
+		Targets:       targets,
+	}, nil
 }
 
 func snapshot(ctx context.Context, args []string, stdout, stderr io.Writer) error {
@@ -617,6 +677,7 @@ Usage:
   mizan serve [--bind 127.0.0.1:7890]
   mizan project new --name edge-prod --engines haproxy,nginx
   mizan project import ./haproxy.cfg --name imported-edge
+  mizan project export <id> [--out mizan-export.json]
   mizan project list
   mizan snapshot list --project <id>
   mizan target add --project <id> --name edge-01 --host 10.0.0.10
