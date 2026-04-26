@@ -8,6 +8,7 @@ The current codebase is a working product foundation with backend statement cove
 
 - Single-binary Go CLI and HTTP server: `mizan serve`
 - Optional Bearer token or Basic auth for HTTP access, required when binding outside localhost
+- Encrypted local secrets vault foundation using Argon2id-derived AES-GCM envelopes
 - Health, readiness, version, and Prometheus-style `/metrics` endpoints with build, project, and HTTP request counters
 - Embedded React WebUI with project creation, import, IR editing, generation, validation, snapshots, diff, audit, topology, and deployment-target panels
 - Project CRUD and filesystem persistence under `~/.mizan/projects`
