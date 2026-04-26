@@ -22,6 +22,19 @@ import (
 	"github.com/mizanproxy/mizan/internal/version"
 )
 
+var listenAndServe = func(srv *http.Server) error {
+	return srv.ListenAndServe()
+}
+
+var (
+	listSnapshotsFromStore = func(st *store.Store, ctx context.Context, id string) ([]string, error) {
+		return st.ListSnapshots(ctx, id)
+	}
+	listSnapshotTagsFromStore = func(st *store.Store, ctx context.Context, id string) ([]store.SnapshotTag, error) {
+		return st.ListSnapshotTags(ctx, id)
+	}
+)
+
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
 		return serve(ctx, nil, stdout, stderr)
@@ -67,15 +80,12 @@ func serve(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		_ = srv.Shutdown(context.Background())
 	}()
 	_, _ = fmt.Fprintf(stdout, "Mizan serving http://%s (data: %s)\n", *bind, st.Root())
-	err := srv.ListenAndServe()
+	err := listenAndServe(srv)
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil
 	}
-	if err != nil {
-		_, _ = fmt.Fprintf(stderr, "serve failed: %v\n", err)
-		return err
-	}
-	return nil
+	_, _ = fmt.Fprintf(stderr, "serve failed: %v\n", err)
+	return err
 }
 
 func project(ctx context.Context, args []string, stdout, stderr io.Writer) error {
@@ -176,7 +186,7 @@ func snapshot(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		if *projectID == "" {
 			return errors.New("--project is required")
 		}
-		snapshots, err := store.New(*home).ListSnapshots(ctx, *projectID)
+		snapshots, err := listSnapshotsFromStore(store.New(*home), ctx, *projectID)
 		if err != nil {
 			return err
 		}
@@ -242,7 +252,7 @@ func snapshot(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		if *projectID == "" {
 			return errors.New("--project is required")
 		}
-		tags, err := store.New(*home).ListSnapshotTags(ctx, *projectID)
+		tags, err := listSnapshotTagsFromStore(store.New(*home), ctx, *projectID)
 		if err != nil {
 			return err
 		}

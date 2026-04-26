@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -475,6 +476,34 @@ func TestAPIStoreAndNativeFailureBranches(t *testing.T) {
 	res = doJSON(mux, http.MethodPost, "/api/v1/projects/"+created.Project.ID+"/validate", map[string]string{"target": "haproxy"})
 	if res.Code != http.StatusOK || !bytes.Contains(res.Body.Bytes(), []byte("native failed")) {
 		t.Fatalf("failed native validate status=%d body=%s", res.Code, res.Body.String())
+	}
+}
+
+func TestAPIInjectedStoreFailureBranches(t *testing.T) {
+	oldDeleteProject := deleteProjectFromStore
+	oldListSnapshots := listSnapshotsFromStore
+	t.Cleanup(func() {
+		deleteProjectFromStore = oldDeleteProject
+		listSnapshotsFromStore = oldListSnapshots
+	})
+	st := store.New(t.TempDir())
+	mux := http.NewServeMux()
+	Register(mux, st)
+
+	deleteProjectFromStore = func(*store.Store, *http.Request, string) error {
+		return errors.New("delete failed")
+	}
+	res := doJSON(mux, http.MethodDelete, "/api/v1/projects/p_1", nil)
+	if res.Code != http.StatusInternalServerError {
+		t.Fatalf("delete injected status=%d body=%s", res.Code, res.Body.String())
+	}
+
+	listSnapshotsFromStore = func(*store.Store, *http.Request, string) ([]string, error) {
+		return nil, errors.New("list snapshots failed")
+	}
+	res = doJSON(mux, http.MethodGet, "/api/v1/projects/p_1/ir/snapshots", nil)
+	if res.Code != http.StatusInternalServerError {
+		t.Fatalf("list snapshots injected status=%d body=%s", res.Code, res.Body.String())
 	}
 }
 

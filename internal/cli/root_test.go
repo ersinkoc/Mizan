@@ -4,9 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/mizanproxy/mizan/internal/store"
 )
 
 func TestRunVersionAndUnknown(t *testing.T) {
@@ -27,6 +31,21 @@ func TestServeInvalidBindReturnsError(t *testing.T) {
 	err := Run(context.Background(), []string{"serve", "--home", t.TempDir(), "--bind", "bad address"}, &stdout, &stderr)
 	if err == nil {
 		t.Fatal("expected serve error for invalid bind")
+	}
+}
+
+func TestRunDefaultServeStopsCleanly(t *testing.T) {
+	oldListenAndServe := listenAndServe
+	t.Cleanup(func() { listenAndServe = oldListenAndServe })
+	listenAndServe = func(*http.Server) error {
+		return http.ErrServerClosed
+	}
+	var stdout, stderr bytes.Buffer
+	if err := Run(context.Background(), nil, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(stdout.Bytes(), []byte("Mizan serving")) {
+		t.Fatalf("unexpected serve output: %s", stdout.String())
 	}
 }
 
@@ -211,6 +230,30 @@ func TestCLIErrorBranches(t *testing.T) {
 		t.Fatalf("unexpected generated file data=%q err=%v", string(data), err)
 	}
 	expectErr("generate", "--home", home, "--project", created.Project.ID, "--out", filepath.Join(t.TempDir(), "missing", "x.cfg"))
+}
+
+func TestSnapshotInjectedStoreErrors(t *testing.T) {
+	oldListSnapshots := listSnapshotsFromStore
+	oldListSnapshotTags := listSnapshotTagsFromStore
+	t.Cleanup(func() {
+		listSnapshotsFromStore = oldListSnapshots
+		listSnapshotTagsFromStore = oldListSnapshotTags
+	})
+	var stdout, stderr bytes.Buffer
+	listSnapshotsFromStore = func(*store.Store, context.Context, string) ([]string, error) {
+		return nil, errors.New("list snapshots failed")
+	}
+	if err := Run(context.Background(), []string{"snapshot", "list", "--home", t.TempDir(), "--project", "p_1"}, &stdout, &stderr); err == nil {
+		t.Fatal("expected injected snapshot list error")
+	}
+	listSnapshotsFromStore = oldListSnapshots
+
+	listSnapshotTagsFromStore = func(*store.Store, context.Context, string) ([]store.SnapshotTag, error) {
+		return nil, errors.New("list tags failed")
+	}
+	if err := Run(context.Background(), []string{"snapshot", "tags", "--home", t.TempDir(), "--project", "p_1"}, &stdout, &stderr); err == nil {
+		t.Fatal("expected injected snapshot tags error")
+	}
 }
 
 func TestParseEngines(t *testing.T) {

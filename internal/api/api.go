@@ -17,6 +17,15 @@ type Handler struct {
 	store *store.Store
 }
 
+var (
+	deleteProjectFromStore = func(st *store.Store, r *http.Request, id string) error {
+		return st.DeleteProject(r.Context(), id)
+	}
+	listSnapshotsFromStore = func(st *store.Store, r *http.Request, id string) ([]string, error) {
+		return st.ListSnapshots(r.Context(), id)
+	}
+)
+
 func Register(mux *http.ServeMux, st *store.Store) {
 	h := &Handler{store: st}
 	mux.HandleFunc("GET /healthz", h.health)
@@ -133,7 +142,7 @@ func (h *Handler) getProject(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) deleteProject(w http.ResponseWriter, r *http.Request) {
-	if err := h.store.DeleteProject(r.Context(), r.PathValue("id")); err != nil {
+	if err := deleteProjectFromStore(h.store, r, r.PathValue("id")); err != nil {
 		writeProblem(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -198,7 +207,7 @@ func (h *Handler) patchIR(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listSnapshots(w http.ResponseWriter, r *http.Request) {
-	snapshots, err := h.store.ListSnapshots(r.Context(), r.PathValue("id"))
+	snapshots, err := listSnapshotsFromStore(h.store, r, r.PathValue("id"))
 	if err != nil {
 		writeProblem(w, http.StatusInternalServerError, err)
 		return

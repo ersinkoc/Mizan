@@ -500,3 +500,136 @@ func TestStoreInjectedOSBranches(t *testing.T) {
 	}
 	tempClose = originalTempClose
 }
+
+func TestStoreCreateImportAndSnapshotWriteBranches(t *testing.T) {
+	ctx := context.Background()
+	st := New(t.TempDir())
+	originalMkdirAll := mkdirAll
+	originalRenameFile := renameFile
+	originalTempSync := tempSync
+	t.Cleanup(func() {
+		mkdirAll = originalMkdirAll
+		renameFile = originalRenameFile
+		tempSync = originalTempSync
+	})
+
+	mkdirCalls := 0
+	mkdirAll = func(path string, mode os.FileMode) error {
+		mkdirCalls++
+		if mkdirCalls == 2 {
+			return errors.New("project mkdir failed")
+		}
+		return originalMkdirAll(path, mode)
+	}
+	if _, _, _, err := st.CreateProject(ctx, "edge", "", []ir.Engine{ir.EngineHAProxy}); err == nil {
+		t.Fatal("expected create project directory error")
+	}
+	mkdirCalls = 0
+	if _, _, _, err := st.ImportProject(ctx, "", "", ir.EmptyModel("", "edge", "", []ir.Engine{ir.EngineHAProxy})); err == nil {
+		t.Fatal("expected import project directory error")
+	}
+	mkdirAll = originalMkdirAll
+
+	renameFile = func(string, string) error {
+		return errors.New("metadata write failed")
+	}
+	if _, _, _, err := st.CreateProject(ctx, "edge", "", []ir.Engine{ir.EngineHAProxy}); err == nil {
+		t.Fatal("expected create metadata write error")
+	}
+	if _, _, _, err := st.ImportProject(ctx, "", "", ir.EmptyModel("", "edge", "", []ir.Engine{ir.EngineHAProxy})); err == nil {
+		t.Fatal("expected import metadata write error")
+	}
+	renameFile = originalRenameFile
+
+	syncCalls := 0
+	tempSync = func(tmp *os.File) error {
+		syncCalls++
+		if syncCalls == 3 {
+			return errors.New("snapshot write failed")
+		}
+		return originalTempSync(tmp)
+	}
+	if _, _, _, err := st.CreateProject(ctx, "edge", "", []ir.Engine{ir.EngineHAProxy}); err == nil {
+		t.Fatal("expected create snapshot write error")
+	}
+	syncCalls = 0
+	if _, _, _, err := st.ImportProject(ctx, "", "", ir.EmptyModel("", "edge", "", []ir.Engine{ir.EngineHAProxy})); err == nil {
+		t.Fatal("expected import snapshot write error")
+	}
+	tempSync = originalTempSync
+}
+
+func TestStoreRemainingBranchCoverage(t *testing.T) {
+	ctx := context.Background()
+	st := New(t.TempDir())
+	meta, model, version, err := st.CreateProject(ctx, "edge", "", []ir.Engine{ir.EngineHAProxy})
+	if err != nil {
+		t.Fatal(err)
+	}
+	model.Description = "second"
+	version2, err := st.SaveIR(ctx, meta.ID, model, version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snaps, err := st.ListSnapshots(ctx, meta.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snaps) < 2 {
+		t.Fatalf("expected at least two snapshots: %v", snaps)
+	}
+	firstTag, err := st.TagSnapshot(ctx, meta.ID, version[:12], "older")
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(time.Millisecond)
+	secondTag, err := st.TagSnapshot(ctx, meta.ID, version2[:12], "newer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tags, err := st.ListSnapshotTags(ctx, meta.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tags) != 2 || tags[0].Label != secondTag.Label || tags[1].Label != firstTag.Label {
+		t.Fatalf("tags were not sorted newest first: %+v", tags)
+	}
+
+	originalRenameFile := renameFile
+	renameFile = func(string, string) error {
+		return errors.New("tag write failed")
+	}
+	if _, err := st.TagSnapshot(ctx, meta.ID, version2[:12], "write-error"); err == nil {
+		t.Fatal("expected tag write error")
+	}
+	renameFile = originalRenameFile
+
+	originalMkdirAll := mkdirAll
+	mkdirAll = func(string, os.FileMode) error {
+		return errors.New("atomic mkdir failed")
+	}
+	if err := atomicWrite(filepath.Join(t.TempDir(), "atomic.json"), []byte("{}")); err == nil {
+		t.Fatal("expected atomic mkdir error")
+	}
+	mkdirAll = originalMkdirAll
+
+	if _, _, err := st.GetSnapshot(ctx, meta.ID, "definitely-missing"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected missing snapshot ref error, got %v", err)
+	}
+	if _, err := st.TagSnapshot(ctx, meta.ID, "definitely-missing", "missing-ref"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected tag missing snapshot error, got %v", err)
+	}
+
+	originalOpenFile := openFile
+	readOnlyPath := filepath.Join(t.TempDir(), "readonly-audit.jsonl")
+	if err := os.WriteFile(readOnlyPath, []byte{}, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	openFile = func(string, int, os.FileMode) (*os.File, error) {
+		return os.Open(readOnlyPath)
+	}
+	if err := st.AppendAudit(ctx, AuditEvent{ProjectID: meta.ID, Action: "audit"}); err == nil {
+		t.Fatal("expected append audit write error")
+	}
+	openFile = originalOpenFile
+}
