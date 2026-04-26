@@ -17,6 +17,7 @@ The current codebase is a working product foundation with backend statement cove
 - Append-only project audit log in `audit.jsonl`
 - Deployment targets and clusters persisted in `targets.json`
 - Deployment dry-run planning for single targets or clusters via generated rollout steps
+- Target probe checks for configured post-reload or monitor endpoints
 - Monitor snapshots for registered targets through API, CLI, and WebUI
 - Monitor SSE stream endpoint for repeated target health snapshots
 - WebUI monitor panel consumes the live SSE stream while a project is open

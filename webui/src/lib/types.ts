@@ -210,6 +210,15 @@ export interface DeployResult {
   steps: DeployStep[];
 }
 
+export interface ProbeResult {
+  target_id: string;
+  target_name: string;
+  url: string;
+  status: 'success' | 'failed';
+  message?: string;
+  checked_at: string;
+}
+
 export interface MonitorSummary {
   total_targets: number;
   healthy: number;

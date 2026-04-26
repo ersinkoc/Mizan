@@ -801,6 +801,40 @@ textarea {
   padding: 14px;
 }
 
+.probe-status {
+  display: grid;
+  gap: 6px;
+  border-top: 1px solid var(--border);
+  border-left: 5px solid var(--accent);
+  padding: 12px 14px;
+  background: var(--input);
+}
+
+.probe-status.failed {
+  border-left-color: var(--danger);
+}
+
+.probe-status div {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.probe-status span,
+.probe-status small,
+.probe-status code {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.probe-status code {
+  font-family: "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+  font-size: 12px;
+}
+
 .deploy-plan-head {
   display: flex;
   align-items: center;

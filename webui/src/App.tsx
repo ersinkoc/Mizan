@@ -33,6 +33,7 @@ import type {
   Model,
   MonitorSnapshot,
   NativeResult,
+  ProbeResult,
   ProjectMeta,
   TargetsResponse,
   ValidateResult
@@ -118,6 +119,7 @@ export function App() {
   const [audit, setAudit] = useState<AuditEvent[]>([]);
   const [targetsFile, setTargetsFile] = useState<TargetsResponse>({ targets: [], clusters: [] });
   const [deployResult, setDeployResult] = useState<DeployResult | null>(null);
+  const [probeResult, setProbeResult] = useState<ProbeResult | null>(null);
   const [monitorSnapshot, setMonitorSnapshot] = useState<MonitorSnapshot | null>(null);
   const [monitorStream, setMonitorStream] = useState<'idle' | 'connecting' | 'live' | 'error'>('idle');
   const [auditStream, setAuditStream] = useState<'idle' | 'connecting' | 'live' | 'error'>('idle');
@@ -143,6 +145,7 @@ export function App() {
     setAudit([]);
     setTargetsFile({ targets: [], clusters: [] });
     setDeployResult(null);
+    setProbeResult(null);
     setMonitorSnapshot(null);
     setError('');
     api
@@ -413,6 +416,21 @@ export function App() {
     }
   }
 
+  async function probeTarget(targetID: string) {
+    if (!active) return;
+    setBusy(true);
+    setError('');
+    try {
+      const result = await api.probeTarget(active.id, targetID);
+      setProbeResult(result);
+      await reloadAudit(active.id);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function previewDeployCluster(clusterID: string) {
     if (!active) return;
     setBusy(true);
@@ -674,6 +692,9 @@ export function App() {
                   {item.monitor_endpoint && <small>monitor {item.monitor_endpoint}</small>}
                   <code>{item.reload_command}</code>
                   <div className="target-card-actions">
+                    <button onClick={() => probeTarget(item.id)} disabled={busy} title="Test target probe">
+                      <ShieldCheck size={15} />
+                    </button>
                     <button onClick={() => previewDeployTarget(item.id)} disabled={busy} title="Preview deployment">
                       <UploadCloud size={15} />
                     </button>
@@ -722,6 +743,7 @@ export function App() {
               )) : <p className="muted">No clusters yet.</p>}
             </div>
           </div>
+          <ProbeStatus result={probeResult} />
           <DeployPlan result={deployResult} />
         </section>
 
@@ -847,6 +869,23 @@ function DeployPlan({ result }: { result: DeployResult | null }) {
           </article>
         ))}
       </div>
+    </div>
+  );
+}
+
+function ProbeStatus({ result }: { result: ProbeResult | null }) {
+  if (!result) {
+    return null;
+  }
+  return (
+    <div className={`probe-status ${result.status}`}>
+      <div>
+        <strong>{result.target_name}</strong>
+        <span>{result.status === 'success' ? 'Probe passed' : 'Probe failed'}</span>
+      </div>
+      <code>{result.url}</code>
+      {result.message && <small>{result.message}</small>}
+      <small>{new Date(result.checked_at).toLocaleString()}</small>
     </div>
   );
 }

@@ -45,6 +45,15 @@ type Step struct {
 	Batch      int       `json:"batch"`
 }
 
+type ProbeResult struct {
+	TargetID   string `json:"target_id"`
+	TargetName string `json:"target_name"`
+	URL        string `json:"url"`
+	Status     string `json:"status"`
+	Message    string `json:"message,omitempty"`
+	CheckedAt  string `json:"checked_at"`
+}
+
 type Runner func(context.Context, store.Target, string, string) (string, error)
 type Prober func(context.Context, string) error
 
@@ -264,6 +273,34 @@ func httpProbe(ctx context.Context, url string) error {
 		return fmt.Errorf("probe returned HTTP %d", res.StatusCode)
 	}
 	return nil
+}
+
+func ProbeTarget(ctx context.Context, target store.Target, prober Prober, now func() time.Time) (ProbeResult, error) {
+	url := target.PostReloadProbe
+	if url == "" {
+		url = target.MonitorEndpoint
+	}
+	if url == "" {
+		return ProbeResult{}, errors.New("target has no probe or monitor endpoint")
+	}
+	if prober == nil {
+		prober = httpProbe
+	}
+	if now == nil {
+		now = func() time.Time { return time.Now().UTC() }
+	}
+	result := ProbeResult{
+		TargetID:   target.ID,
+		TargetName: target.Name,
+		URL:        url,
+		Status:     "success",
+		CheckedAt:  now().UTC().Format(time.RFC3339),
+	}
+	if err := prober(ctx, url); err != nil {
+		result.Status = "failed"
+		result.Message = err.Error()
+	}
+	return result, nil
 }
 
 func stepStatus(err error, dryRun bool) string {

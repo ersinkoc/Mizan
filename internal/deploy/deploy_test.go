@@ -271,3 +271,36 @@ func TestHTTPProbe(t *testing.T) {
 		t.Fatalf("expected successful probe: %v", err)
 	}
 }
+
+func TestProbeTarget(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	now := time.Date(2026, 4, 26, 10, 0, 0, 0, time.UTC)
+	result, err := ProbeTarget(t.Context(), store.Target{ID: "t_1", Name: "edge", PostReloadProbe: "https://edge.example.com/healthz"}, func(context.Context, string) error {
+		return nil
+	}, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "success" || result.URL != "https://edge.example.com/healthz" || result.CheckedAt != now.Format(time.RFC3339) {
+		t.Fatalf("result=%+v", result)
+	}
+	result, err = ProbeTarget(t.Context(), store.Target{ID: "t_1", Name: "edge", MonitorEndpoint: "https://edge.example.com/status"}, func(context.Context, string) error {
+		return errors.New("probe failed")
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "failed" || result.Message != "probe failed" || result.URL != "https://edge.example.com/status" {
+		t.Fatalf("result=%+v", result)
+	}
+	result, err = ProbeTarget(t.Context(), store.Target{ID: "t_1", Name: "edge", PostReloadProbe: server.URL}, nil, nil)
+	if err != nil || result.Status != "success" {
+		t.Fatalf("expected default prober success result=%+v err=%v", result, err)
+	}
+	if _, err := ProbeTarget(t.Context(), store.Target{Name: "edge"}, nil, nil); err == nil {
+		t.Fatal("expected missing endpoint error")
+	}
+}

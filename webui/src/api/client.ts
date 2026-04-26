@@ -7,6 +7,7 @@ import type {
   IRResponse,
   Model,
   MonitorSnapshot,
+  ProbeResult,
   ProjectMeta,
   SnapshotTag,
   Cluster,
@@ -89,6 +90,8 @@ export const api = {
     }),
   deleteTarget: (projectID: string, targetID: string) =>
     request<void>(`/api/v1/projects/${projectID}/targets/${targetID}`, { method: 'DELETE' }),
+  probeTarget: (projectID: string, targetID: string) =>
+    request<ProbeResult>(`/api/v1/projects/${projectID}/targets/${targetID}/probe`, { method: 'POST' }),
   upsertCluster: (projectID: string, cluster: Partial<Cluster>) =>
     request<Cluster>(`/api/v1/projects/${projectID}/clusters`, {
       method: 'POST',

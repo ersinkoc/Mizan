@@ -63,6 +63,7 @@ func Register(mux *http.ServeMux, st *store.Store) {
 	mux.HandleFunc("GET /api/v1/projects/{id}/audit", h.listAudit)
 	mux.HandleFunc("GET /api/v1/projects/{id}/targets", h.listTargets)
 	mux.HandleFunc("POST /api/v1/projects/{id}/targets", h.upsertTarget)
+	mux.HandleFunc("POST /api/v1/projects/{id}/targets/{targetID}/probe", h.probeTarget)
 	mux.HandleFunc("DELETE /api/v1/projects/{id}/targets/{targetID}", h.deleteTarget)
 	mux.HandleFunc("POST /api/v1/projects/{id}/clusters", h.upsertCluster)
 	mux.HandleFunc("DELETE /api/v1/projects/{id}/clusters/{clusterID}", h.deleteCluster)
@@ -578,6 +579,32 @@ func (h *Handler) upsertTarget(w http.ResponseWriter, r *http.Request) {
 	}
 	h.audit(r, r.PathValue("id"), "target.upsert", "", target.Engine, "success", "", map[string]any{"target_id": target.ID, "host": target.Host})
 	writeJSON(w, http.StatusOK, target)
+}
+
+func (h *Handler) probeTarget(w http.ResponseWriter, r *http.Request) {
+	targets, err := h.store.ListTargets(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeProblem(w, http.StatusNotFound, err)
+		return
+	}
+	var selected *store.Target
+	for i := range targets.Targets {
+		if targets.Targets[i].ID == r.PathValue("targetID") {
+			selected = &targets.Targets[i]
+			break
+		}
+	}
+	if selected == nil {
+		writeProblem(w, http.StatusNotFound, errors.New("target not found"))
+		return
+	}
+	result, err := deploy.ProbeTarget(r.Context(), *selected, nil, nil)
+	if err != nil {
+		writeProblem(w, http.StatusBadRequest, err)
+		return
+	}
+	h.audit(r, r.PathValue("id"), "target.probe", "", selected.Engine, result.Status, result.Message, map[string]any{"target_id": selected.ID, "url": result.URL})
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (h *Handler) deleteTarget(w http.ResponseWriter, r *http.Request) {

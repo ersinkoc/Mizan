@@ -15,6 +15,7 @@ flowchart LR
   Audit["Audit\nAppend-only audit.jsonl\nWebUI panel"]:::done
   AuditStream["Audit Stream\nSSE audit events\nWebUI live panel"]:::done
   Targets["Target Registry\nTargets + clusters\nWebUI panel"]:::done
+  TargetProbe["Target Probe\nHTTP endpoint test\nAPI + WebUI"]:::done
   DeployPlan["Deploy Plan\nDry-run rollout steps\nAudit event"]:::done
   MonitorBase["Monitor Snapshot\nTarget health contract\nAPI + CLI + WebUI"]:::done
   HAProxyMonitor["HAProxy Monitor\nshow stat CSV parser\nhealth summary"]:::done
@@ -28,6 +29,7 @@ flowchart LR
   IR --> Audit
   Audit --> AuditStream
   Audit --> Targets
+  Targets --> TargetProbe
   Targets --> DeployPlan
   DeployPlan --> Deploy
   Validate --> Deploy
@@ -294,6 +296,8 @@ sequenceDiagram
 
 The deploy package now computes the concrete rollout steps for one target or a cluster: upload generated config, remote validate, install, reload, and optional post-reload probe. The WebUI currently invokes this as a dry run. The same backend path has command-runner and probe hooks for future real SSH execution.
 
+Target probe checks reuse the same HTTP probe helper without running SSH or deployment steps. `POST /api/v1/projects/{id}/targets/{targetID}/probe` tests a target's `post_reload_probe` URL, falling back to `monitor_endpoint`, and records a `target.probe` audit event.
+
 The same flow is exposed from the CLI:
 
 ```sh
@@ -558,6 +562,7 @@ mindmap
       targets.json
     Deployment
       dry-run plan
+      target probe
       target selection
       cluster batches
       audit event

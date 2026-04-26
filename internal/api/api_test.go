@@ -192,6 +192,74 @@ func TestProjectEventsEndpoint(t *testing.T) {
 	}
 }
 
+func TestTargetProbeEndpoint(t *testing.T) {
+	probeServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/fail" {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer probeServer.Close()
+	st := store.New(t.TempDir())
+	mux := http.NewServeMux()
+	Register(mux, st)
+	res := doJSON(mux, http.MethodPost, "/api/v1/projects", map[string]any{"name": "edge", "engines": []string{"haproxy"}})
+	if res.Code != http.StatusCreated {
+		t.Fatalf("create status=%d body=%s", res.Code, res.Body.String())
+	}
+	var created struct {
+		Project struct {
+			ID string `json:"id"`
+		} `json:"project"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	res = doJSON(mux, http.MethodPost, "/api/v1/projects/"+created.Project.ID+"/targets", map[string]any{"name": "edge", "host": "localhost", "engine": "haproxy", "post_reload_probe": probeServer.URL + "/ok"})
+	if res.Code != http.StatusOK {
+		t.Fatalf("target status=%d body=%s", res.Code, res.Body.String())
+	}
+	var target store.Target
+	if err := json.Unmarshal(res.Body.Bytes(), &target); err != nil {
+		t.Fatal(err)
+	}
+	res = doJSON(mux, http.MethodPost, "/api/v1/projects/"+created.Project.ID+"/targets/"+target.ID+"/probe", nil)
+	if res.Code != http.StatusOK || !bytes.Contains(res.Body.Bytes(), []byte(`"status":"success"`)) {
+		t.Fatalf("probe status=%d body=%s", res.Code, res.Body.String())
+	}
+	res = doJSON(mux, http.MethodPost, "/api/v1/projects/"+created.Project.ID+"/targets", map[string]any{"name": "edge-fail", "host": "localhost", "engine": "haproxy", "monitor_endpoint": probeServer.URL + "/fail"})
+	if res.Code != http.StatusOK {
+		t.Fatalf("target fail status=%d body=%s", res.Code, res.Body.String())
+	}
+	var failTarget store.Target
+	if err := json.Unmarshal(res.Body.Bytes(), &failTarget); err != nil {
+		t.Fatal(err)
+	}
+	res = doJSON(mux, http.MethodPost, "/api/v1/projects/"+created.Project.ID+"/targets/"+failTarget.ID+"/probe", nil)
+	if res.Code != http.StatusOK || !bytes.Contains(res.Body.Bytes(), []byte(`"status":"failed"`)) || !bytes.Contains(res.Body.Bytes(), []byte("HTTP 500")) {
+		t.Fatalf("failed probe status=%d body=%s", res.Code, res.Body.String())
+	}
+	res = doJSON(mux, http.MethodPost, "/api/v1/projects/"+created.Project.ID+"/targets", map[string]any{"name": "edge-empty", "host": "localhost", "engine": "haproxy"})
+	if res.Code != http.StatusOK {
+		t.Fatalf("target empty status=%d body=%s", res.Code, res.Body.String())
+	}
+	var emptyTarget store.Target
+	if err := json.Unmarshal(res.Body.Bytes(), &emptyTarget); err != nil {
+		t.Fatal(err)
+	}
+	res = doJSON(mux, http.MethodPost, "/api/v1/projects/"+created.Project.ID+"/targets/"+emptyTarget.ID+"/probe", nil)
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("empty probe status=%d body=%s", res.Code, res.Body.String())
+	}
+	if res = doJSON(mux, http.MethodPost, "/api/v1/projects/"+created.Project.ID+"/targets/missing/probe", nil); res.Code != http.StatusNotFound {
+		t.Fatalf("missing target probe status=%d body=%s", res.Code, res.Body.String())
+	}
+	if res = doJSON(mux, http.MethodPost, "/api/v1/projects/missing/targets/missing/probe", nil); res.Code != http.StatusNotFound {
+		t.Fatalf("missing project probe status=%d body=%s", res.Code, res.Body.String())
+	}
+}
+
 func TestProjectEventsBranches(t *testing.T) {
 	st := store.New(t.TempDir())
 	mux := http.NewServeMux()
