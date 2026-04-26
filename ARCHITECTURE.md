@@ -589,6 +589,7 @@ mindmap
       audit SSE stream
       audit filters
       audit CSV export
+      CLI audit show
       targets.json
     Deployment
       dry-run plan

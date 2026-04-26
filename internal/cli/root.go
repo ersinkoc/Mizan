@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -73,6 +74,8 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return deployCmd(ctx, args[1:], stdout, stderr)
 	case "monitor":
 		return monitorCmd(ctx, args[1:], stdout, stderr)
+	case "audit":
+		return auditCmd(ctx, args[1:], stdout, stderr)
 	default:
 		usage(stderr)
 		return fmt.Errorf("unknown command %q", args[0])
@@ -646,6 +649,109 @@ func streamSnapshots(ctx context.Context, st *store.Store, projectID string, lim
 	}
 }
 
+func auditCmd(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	if len(args) == 0 {
+		_, _ = fmt.Fprintln(stderr, "usage: mizan audit show --project <id> [--csv] [--out audit.csv]")
+		return errors.New("missing audit command")
+	}
+	switch args[0] {
+	case "show":
+		fs := flag.NewFlagSet("audit show", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		home := fs.String("home", store.DefaultRoot(), "Mizan data directory")
+		projectID := fs.String("project", "", "project id")
+		limit := fs.Int("limit", 100, "maximum events to return")
+		from := fs.String("from", "", "RFC3339 start timestamp")
+		to := fs.String("to", "", "RFC3339 end timestamp")
+		actor := fs.String("actor", "", "actor filter")
+		action := fs.String("action", "", "action filter")
+		outcome := fs.String("outcome", "", "outcome filter")
+		targetEngine := fs.String("target-engine", "", "target engine filter: haproxy or nginx")
+		csvOut := fs.Bool("csv", false, "write CSV instead of JSON")
+		out := fs.String("out", "", "write output to file")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if *projectID == "" {
+			return errors.New("--project is required")
+		}
+		filter, err := auditFilterFromFlags(*limit, *from, *to, *actor, *action, *outcome, *targetEngine)
+		if err != nil {
+			return err
+		}
+		events, err := store.New(*home).ListAuditFiltered(ctx, *projectID, filter)
+		if err != nil {
+			return err
+		}
+		writer := stdout
+		var f *os.File
+		if *out != "" {
+			f, err = os.Create(*out)
+			if err != nil {
+				return err
+			}
+			defer f.Close()
+			writer = f
+		}
+		if *csvOut || strings.HasSuffix(strings.ToLower(*out), ".csv") {
+			return writeAuditCSV(writer, events)
+		}
+		encoder := json.NewEncoder(writer)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(events)
+	default:
+		return fmt.Errorf("unknown audit command %q", args[0])
+	}
+}
+
+func auditFilterFromFlags(limit int, from, to, actor, action, outcome, targetEngine string) (store.AuditFilter, error) {
+	if limit < 1 {
+		return store.AuditFilter{}, errors.New("--limit must be greater than zero")
+	}
+	filter := store.AuditFilter{Limit: limit, Actor: actor, Action: action, Outcome: outcome}
+	if from != "" {
+		parsed, err := time.Parse(time.RFC3339, from)
+		if err != nil {
+			return filter, fmt.Errorf("invalid --from timestamp %q", from)
+		}
+		filter.From = parsed
+	}
+	if to != "" {
+		parsed, err := time.Parse(time.RFC3339, to)
+		if err != nil {
+			return filter, fmt.Errorf("invalid --to timestamp %q", to)
+		}
+		filter.To = parsed
+	}
+	if targetEngine != "" {
+		engine := ir.Engine(targetEngine)
+		if engine != ir.EngineHAProxy && engine != ir.EngineNginx {
+			return filter, fmt.Errorf("invalid --target-engine %q", targetEngine)
+		}
+		filter.TargetEngine = engine
+	}
+	return filter, nil
+}
+
+func writeAuditCSV(w io.Writer, events []store.AuditEvent) error {
+	cw := csv.NewWriter(w)
+	_ = cw.Write([]string{"event_id", "timestamp", "actor", "action", "outcome", "target_engine", "ir_snapshot_hash", "error_message"})
+	for _, event := range events {
+		_ = cw.Write([]string{
+			event.EventID,
+			event.Timestamp.UTC().Format(time.RFC3339),
+			event.Actor,
+			event.Action,
+			event.Outcome,
+			string(event.TargetEngine),
+			event.IRSnapshotHash,
+			event.ErrorMessage,
+		})
+	}
+	cw.Flush()
+	return cw.Error()
+}
+
 func parseEngines(v string) []ir.Engine {
 	var engines []ir.Engine
 	for _, part := range splitCSV(v) {
@@ -685,6 +791,7 @@ Usage:
   mizan generate --project <id> --target haproxy [--out haproxy.cfg]
   mizan validate --project <id> --target nginx
   mizan deploy --project <id> --target-id <target-id>
+  mizan audit show --project <id> [--csv]
   mizan monitor snapshot --project <id>
   mizan monitor stream --project <id> [--limit 10]
   mizan version`)

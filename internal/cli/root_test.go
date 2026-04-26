@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -189,6 +190,21 @@ func TestProjectGenerateValidateAndSnapshotCommands(t *testing.T) {
 		t.Fatalf("unexpected deploy audit events: %+v", events)
 	}
 	stdout.Reset()
+	if err := Run(context.Background(), []string{"audit", "show", "--home", home, "--project", created.Project.ID, "--action", "deploy.run", "--actor", "cli", "--outcome", "success", "--from", "2000-01-01T00:00:00Z", "--to", "2100-01-01T00:00:00Z", "--limit", "1"}, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(stdout.Bytes(), []byte("deploy.run")) {
+		t.Fatalf("audit show output unexpected: %s", stdout.String())
+	}
+	auditPath := filepath.Join(t.TempDir(), "audit.csv")
+	stdout.Reset()
+	if err := Run(context.Background(), []string{"audit", "show", "--home", home, "--project", created.Project.ID, "--csv", "--out", auditPath}, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(auditPath); err != nil || !bytes.Contains(data, []byte("event_id,timestamp,actor,action,outcome")) {
+		t.Fatalf("audit csv file unexpected data=%q err=%v", string(data), err)
+	}
+	stdout.Reset()
 	if err := Run(context.Background(), []string{"snapshot", "list", "--home", home, "--project", created.Project.ID}, &stdout, &stderr); err != nil {
 		t.Fatal(err)
 	}
@@ -346,6 +362,15 @@ func TestCLIErrorBranches(t *testing.T) {
 	expectErr("deploy", "--home", home)
 	expectErr("deploy", "--home", home, "--project", "missing")
 	expectErr("deploy", "--home", home, "--project", "missing", "--target-id", "t_1")
+	expectErr("audit")
+	expectErr("audit", "show", "--bad")
+	expectErr("audit", "show", "--home", home)
+	expectErr("audit", "show", "--home", home, "--project", "p_1", "--limit", "0")
+	expectErr("audit", "show", "--home", home, "--project", "p_1", "--from", "bad")
+	expectErr("audit", "show", "--home", home, "--project", "p_1", "--to", "bad")
+	expectErr("audit", "show", "--home", home, "--project", "p_1", "--target-engine", "bad")
+	expectErr("audit", "show", "--home", home, "--project", "p_1", "--out", filepath.Join(t.TempDir(), "missing", "audit.json"))
+	expectErr("audit", "unknown")
 	expectErr("monitor")
 	expectErr("monitor", "snapshot", "--bad")
 	expectErr("monitor", "snapshot", "--home", home)
@@ -395,6 +420,27 @@ func TestCLIErrorBranches(t *testing.T) {
 	if err := os.Remove(targetsPath); err != nil {
 		t.Fatal(err)
 	}
+	if err := store.New(home).AppendAudit(context.Background(), store.AuditEvent{ProjectID: created.Project.ID, Actor: "cli", Action: "target.probe", Outcome: "failed", TargetEngine: "nginx", ErrorMessage: "probe failed"}); err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
+	if err := Run(context.Background(), []string{"audit", "show", "--home", home, "--project", created.Project.ID, "--target-engine", "nginx", "--csv"}, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(stdout.Bytes(), []byte("target.probe")) || !bytes.Contains(stdout.Bytes(), []byte("probe failed")) {
+		t.Fatalf("audit csv stdout unexpected: %s", stdout.String())
+	}
+	stdout.Reset()
+	if err := Run(context.Background(), []string{"audit", "show", "--home", home, "--project", created.Project.ID}, errWriter{}, &stderr); err == nil {
+		t.Fatal("expected audit json writer error")
+	}
+	if err := Run(context.Background(), []string{"audit", "show", "--home", home, "--project", created.Project.ID, "--csv"}, errWriter{}, &stderr); err == nil {
+		t.Fatal("expected audit csv writer error")
+	}
+	if err := os.WriteFile(filepath.Join(home, "projects", created.Project.ID, "audit.jsonl"), []byte(strings.Repeat("x", 70_000)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	expectErr("audit", "show", "--home", home, "--project", created.Project.ID)
 	expectErr("generate", "--home", home, "--project", created.Project.ID, "--target", "bad")
 	expectErr("validate", "--home", home, "--project", created.Project.ID, "--target", "bad")
 	expectErr("deploy", "--home", home, "--project", created.Project.ID, "--target-id", "t_1", "--cluster-id", "c_1")
