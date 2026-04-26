@@ -1,6 +1,6 @@
 # Mizan Architecture
 
-Mizan is a local-first visual configuration architect for HAProxy and Nginx. It is built as a Go single-binary application with an embedded React/Vite WebUI. The current implementation is a working foundation: projects can be created or imported, persisted as JSON, edited as IR, visualized as topology, generated into HAProxy/Nginx config, validated, snapshotted, tagged, reverted, and audited.
+Mizan is a local-first visual configuration architect for HAProxy and Nginx. It is built as a Go single-binary application with an embedded React/Vite WebUI. The current implementation is a working foundation: projects can be created or imported, persisted as JSON, edited as IR, visualized as topology, generated into HAProxy/Nginx config, validated, snapshotted, tagged, diffed, reverted, audited, and associated with deployment targets or clusters.
 
 ## Current Project Status
 
@@ -13,12 +13,15 @@ flowchart LR
   Validate["Validate\nStructural + native binary wrapper"]:::done
   Topology["Topology\nReact Flow graph\nDrag/connect updates IR"]:::done
   Audit["Audit\nAppend-only audit.jsonl\nWebUI panel"]:::done
+  Targets["Target Registry\nTargets + clusters\nWebUI panel"]:::done
   Deploy["SSH Deploy\nNot implemented yet"]:::todo
   Monitor["Live Monitoring\nNot implemented yet"]:::todo
 
   Foundation --> IR --> Import --> Generate --> Validate
   IR --> Topology
   IR --> Audit
+  Audit --> Targets
+  Targets --> Deploy
   Validate --> Deploy
   Deploy --> Monitor
 
@@ -299,6 +302,7 @@ flowchart TB
   Project["<project-id>/"]
   Meta["project.json"]
   Config["config.json\ncurrent IR"]
+  Targets["targets.json\ndeploy targets + clusters"]
   Snapshots["snapshots/"]
   Snapshot["timestamp-hash.json"]
   Tags["snapshot-tags.json"]
@@ -309,6 +313,7 @@ flowchart TB
   Projects --> Project
   Project --> Meta
   Project --> Config
+  Project --> Targets
   Project --> Snapshots
   Snapshots --> Snapshot
   Project --> Tags
@@ -352,6 +357,7 @@ flowchart LR
   GeneratePanel["Generate / Validate panel"]
   Topology["TopologyCanvas"]
   Snapshots["Snapshots panel"]
+  Targets["Targets / clusters panel"]
   Audit["Audit panel"]
 
   APIClient --> App
@@ -359,6 +365,7 @@ flowchart LR
   App --> GeneratePanel
   App --> Topology
   App --> Snapshots
+  App --> Targets
   App --> Audit
   Topology -->|move/connect| App
   IRDraft -->|Save| APIClient
@@ -395,7 +402,7 @@ flowchart TB
   Go["Go test suite\nPASS"]
   FE["Frontend Vitest\nPASS"]
   FECoverage["Frontend core coverage\n100% statements\n100% functions\n100% lines\n95.58% branches"]
-  GoCoverage["Go total coverage\n83.8% statements"]
+  GoCoverage["Go total coverage\n100.0% statements"]
 
   Tests --> Go
   Tests --> FE
@@ -406,7 +413,8 @@ flowchart TB
 Current verified commands:
 
 ```sh
-go test ./...
+go test -coverprofile dist/coverage.out ./...
+go tool cover -func dist/coverage.out
 npm run lint
 npm run test:coverage
 npm run build
@@ -418,7 +426,7 @@ Current coverage state:
 | Area | Status |
 |---|---:|
 | Go test pass rate | 100% |
-| Go total statement coverage | 83.8% |
+| Go total statement coverage | 100.0% |
 | Frontend core statement coverage | 100% |
 | Frontend core branch coverage | 95.58% |
 | Frontend core function coverage | 100% |
@@ -445,6 +453,10 @@ mindmap
       snapshots
       tags
       audit.jsonl
+      targets.json
+    Snapshot Diff
+      structural tree
+      added removed modified
     Generation
       HAProxy
       Nginx
@@ -458,6 +470,9 @@ mindmap
       validate panel
       topology
       snapshots
+      diff
+      targets
+      clusters
       audit
     CLI
       serve
@@ -472,7 +487,7 @@ mindmap
 ```mermaid
 flowchart LR
   SSH["SSH deployment"]
-  Clusters["Cluster orchestration"]
+  Rollout["Cluster rollout orchestration"]
   Secrets["Encrypted secrets vault"]
   Monitor["Live HAProxy/Nginx monitoring"]
   SSE["SSE project/monitor streams"]
@@ -480,14 +495,14 @@ flowchart LR
   Wizard["Full wizard UI"]
   DiffUI["Rich snapshot diff UI"]
 
-  SSH --> Clusters
+  SSH --> Rollout
   Secrets --> SSH
   Monitor --> SSE
   FullParser --> Wizard
   DiffUI --> Wizard
 ```
 
-The codebase is now a working product foundation, not yet a full v1 implementation. The next largest architectural slices are deployment, monitoring, full parser round-trip, richer wizard editing, and deeper diff UI.
+The codebase is now a working product foundation, not yet a full v1 implementation. Target and cluster persistence exists, but real SSH deployment and staged rollout execution are still future work. The next largest architectural slices are deployment, monitoring, full parser round-trip, richer wizard editing, and deeper diff UI.
 
 ## Design Principles
 
@@ -497,5 +512,4 @@ The codebase is now a working product foundation, not yet a full v1 implementati
 - **No database**: project state is JSON, easy to inspect and Git-version.
 - **Pure translators**: target configs are deterministic outputs of the IR.
 - **Append-only audit**: project history is observable and never rewritten.
-- **Progressive hardening**: coverage gates and tests are being raised as the product surface grows.
-
+- **Progressive hardening**: backend statement coverage is currently 100%, while frontend core library coverage is gated at 100% statements, functions, and lines.

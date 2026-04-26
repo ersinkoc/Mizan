@@ -1,25 +1,36 @@
 # Mizan
 
-Mizan is a single-binary visual config architect for HAProxy and Nginx. It stores projects as JSON under `~/.mizan`, serves an embedded React UI, and can generate basic HAProxy/Nginx configs from a shared IR.
+Mizan is a local-first visual configuration architect for HAProxy and Nginx. It runs as a single Go binary, serves an embedded React/Vite WebUI, stores projects as inspectable JSON under `~/.mizan`, and translates one Universal IR into target-specific HAProxy or Nginx configuration.
 
-This repository currently contains the working v0 foundation:
+The current codebase is a working product foundation with backend statement coverage at 100%.
 
-- Go CLI and HTTP server: `mizan serve`
-- Project CRUD and IR persistence with snapshots
-- HAProxy/Nginx import into IR for the core supported directives
-- Snapshot listing, tagging, retrieval, and revert
-- Structural IR linting and deterministic snapshot hashes
-- HAProxy and Nginx config generation
-- Native validation wrapper when `haproxy` or `nginx` exists on `PATH`
-- React/Vite WebUI for project creation, IR editing, generation, and diagnostics
+## What Works Today
+
+- Single-binary Go CLI and HTTP server: `mizan serve`
+- Embedded React WebUI with project creation, import, IR editing, generation, validation, snapshots, diff, audit, topology, and deployment-target panels
+- Project CRUD and filesystem persistence under `~/.mizan/projects`
+- Universal IR with structural linting, deterministic hashes, mutations, canonical JSON, and structural diffs
+- HAProxy and Nginx import for the supported v0 directive subset
+- HAProxy and Nginx generation from the shared IR
+- Validation pipeline with IR linting plus optional native `haproxy -c` / `nginx -t` checks when binaries exist on `PATH`
+- Snapshots, tags, snapshot retrieval, revert, and diff
+- Append-only project audit log in `audit.jsonl`
+- Deployment targets and clusters persisted in `targets.json`
+- Topology canvas with drag/connect gestures that update the IR
 
 ## Run
 
 ```sh
-go run ./cmd/mizan serve
+go run ./cmd/mizan serve --bind 127.0.0.1:7890
 ```
 
 Open `http://127.0.0.1:7890`.
+
+If you already built the embedded binary on Windows:
+
+```powershell
+dist\mizan.exe serve --bind 127.0.0.1:7890
+```
 
 For frontend development:
 
@@ -43,21 +54,14 @@ go run ./cmd/mizan validate --project <id> --target nginx
 
 ## Build
 
+With `make`:
+
 ```sh
 make ui
 make binary
 ```
 
-## Test and Coverage
-
-```sh
-make test
-make coverage
-```
-
-Frontend core library coverage is gated at 100% statements, 100% functions, 100% lines, and 90% branches. Backend coverage is reported with `go tool cover`; the current backend goal is to keep raising package coverage without weakening the all-green test gate.
-
-On Windows without `make`, run:
+On Windows without `make`:
 
 ```powershell
 cd webui
@@ -68,3 +72,40 @@ Remove-Item -Recurse -Force internal/server/dist
 Copy-Item -Recurse webui/dist internal/server/dist
 go build -o dist/mizan.exe ./cmd/mizan
 ```
+
+## Test and Coverage
+
+Backend:
+
+```sh
+go test -coverprofile dist/coverage.out ./...
+go tool cover -func dist/coverage.out
+```
+
+Frontend:
+
+```sh
+cd webui
+npm run lint
+npm run test:coverage
+npm run build
+npm audit --omit=dev
+```
+
+Current verified gates:
+
+| Area | Status |
+|---|---:|
+| Go test pass rate | 100% |
+| Go total statement coverage | 100.0% |
+| Frontend core statement coverage | 100% |
+| Frontend core function coverage | 100% |
+| Frontend core line coverage | 100% |
+| Frontend core branch coverage | 95.58% |
+| Production dependency audit | 0 vulnerabilities |
+
+Frontend coverage is scoped to `webui/src/lib/**/*.ts` in `webui/vitest.config.ts`; backend coverage is measured across `./...`.
+
+## Architecture
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the current architecture, request flows, storage layout, coverage status, and Mermaid diagrams.
