@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"github.com/mizanproxy/mizan/internal/ir"
 	"github.com/mizanproxy/mizan/internal/ir/parser"
 	"github.com/mizanproxy/mizan/internal/monitor"
+	"github.com/mizanproxy/mizan/internal/secrets"
 	"github.com/mizanproxy/mizan/internal/server"
 	"github.com/mizanproxy/mizan/internal/store"
 	"github.com/mizanproxy/mizan/internal/validate"
@@ -76,10 +78,20 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return monitorCmd(ctx, args[1:], stdout, stderr)
 	case "audit":
 		return auditCmd(ctx, args[1:], stdout, stderr)
+	case "secret":
+		return secretCmd(ctx, args[1:], stdout, stderr)
 	default:
 		usage(stderr)
 		return fmt.Errorf("unknown command %q", args[0])
 	}
+}
+
+type redactedSecret struct {
+	Username      string `json:"username,omitempty"`
+	HasPassword   bool   `json:"has_password"`
+	HasPrivateKey bool   `json:"has_private_key"`
+	HasPassphrase bool   `json:"has_passphrase"`
+	HasToken      bool   `json:"has_token"`
 }
 
 func serve(ctx context.Context, args []string, stdout, stderr io.Writer) error {
@@ -719,6 +731,104 @@ func auditCmd(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	}
 }
 
+func secretCmd(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	if len(args) == 0 {
+		_, _ = fmt.Fprintln(stderr, "usage: mizan secret set|get|list|delete")
+		return errors.New("missing secret command")
+	}
+	switch args[0] {
+	case "set":
+		fs := flag.NewFlagSet("secret set", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		home := fs.String("home", store.DefaultRoot(), "Mizan data directory")
+		id := fs.String("id", "", "secret id")
+		vaultPassphrase := fs.String("vault-passphrase", "", "vault passphrase")
+		username := fs.String("username", "", "SSH username")
+		password := fs.String("password", "", "SSH password")
+		privateKey := fs.String("private-key", "", "private key contents")
+		privateKeyFile := fs.String("private-key-file", "", "path to private key file")
+		secretPassphrase := fs.String("passphrase", "", "private key passphrase")
+		token := fs.String("token", "", "API token")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if *id == "" {
+			return errors.New("--id is required")
+		}
+		if *privateKey != "" && *privateKeyFile != "" {
+			return errors.New("use only one of --private-key or --private-key-file")
+		}
+		if *privateKeyFile != "" {
+			data, err := os.ReadFile(*privateKeyFile)
+			if err != nil {
+				return err
+			}
+			*privateKey = string(data)
+		}
+		secret := secrets.Secret{
+			Username:   *username,
+			Password:   *password,
+			PrivateKey: *privateKey,
+			Passphrase: *secretPassphrase,
+			Token:      *token,
+		}
+		if secret == (secrets.Secret{}) {
+			return errors.New("at least one secret field is required")
+		}
+		if err := secrets.New(secretsRoot(*home)).Put(ctx, *id, vaultPassphraseBytes(*vaultPassphrase), secret); err != nil {
+			return err
+		}
+		return json.NewEncoder(stdout).Encode(map[string]string{"id": *id, "status": "stored"})
+	case "get":
+		fs := flag.NewFlagSet("secret get", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		home := fs.String("home", store.DefaultRoot(), "Mizan data directory")
+		id := fs.String("id", "", "secret id")
+		vaultPassphrase := fs.String("vault-passphrase", "", "vault passphrase")
+		reveal := fs.Bool("reveal", false, "print secret values")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if *id == "" {
+			return errors.New("--id is required")
+		}
+		secret, err := secrets.New(secretsRoot(*home)).Get(ctx, *id, vaultPassphraseBytes(*vaultPassphrase))
+		if err != nil {
+			return err
+		}
+		if *reveal {
+			return json.NewEncoder(stdout).Encode(secret)
+		}
+		return json.NewEncoder(stdout).Encode(redactSecret(secret))
+	case "list":
+		fs := flag.NewFlagSet("secret list", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		home := fs.String("home", store.DefaultRoot(), "Mizan data directory")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		ids, err := secrets.New(secretsRoot(*home)).List(ctx)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(stdout).Encode(ids)
+	case "delete":
+		fs := flag.NewFlagSet("secret delete", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		home := fs.String("home", store.DefaultRoot(), "Mizan data directory")
+		id := fs.String("id", "", "secret id")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if *id == "" {
+			return errors.New("--id is required")
+		}
+		return secrets.New(secretsRoot(*home)).Delete(ctx, *id)
+	default:
+		return fmt.Errorf("unknown secret command %q", args[0])
+	}
+}
+
 func auditFilterFromFlags(limit int, from, to, actor, action, outcome, targetEngine string) (store.AuditFilter, error) {
 	if limit < 1 {
 		return store.AuditFilter{}, errors.New("--limit must be greater than zero")
@@ -800,6 +910,24 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
+func secretsRoot(home string) string {
+	return filepath.Join(home, "secrets")
+}
+
+func vaultPassphraseBytes(value string) []byte {
+	return []byte(firstNonEmpty(value, os.Getenv("MIZAN_VAULT_PASSPHRASE")))
+}
+
+func redactSecret(secret secrets.Secret) redactedSecret {
+	return redactedSecret{
+		Username:      secret.Username,
+		HasPassword:   secret.Password != "",
+		HasPrivateKey: secret.PrivateKey != "",
+		HasPassphrase: secret.Passphrase != "",
+		HasToken:      secret.Token != "",
+	}
+}
+
 func usage(w io.Writer) {
 	_, _ = fmt.Fprintln(w, `Mizan - visual config architect for HAProxy and Nginx
 
@@ -816,6 +944,7 @@ Usage:
   mizan validate --project <id> --target nginx
   mizan deploy --project <id> --target-id <target-id>
   mizan audit show --project <id> [--csv]
+  mizan secret set --id <target-id> --username root --private-key-file ~/.ssh/id_ed25519
   mizan monitor snapshot --project <id>
   mizan monitor stream --project <id> [--limit 10]
   mizan version`)

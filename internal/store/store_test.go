@@ -55,7 +55,8 @@ func TestAuditAppendAndList(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.AppendAudit(ctx, AuditEvent{ProjectID: meta.ID, Actor: "test", Action: "ir.patch", IRSnapshotHash: "abc", Outcome: "success"}); err != nil {
+	base := time.Date(2026, 4, 26, 10, 0, 0, 0, time.UTC)
+	if err := st.AppendAudit(ctx, AuditEvent{ProjectID: meta.ID, Actor: "test", Action: "ir.patch", IRSnapshotHash: "abc", Outcome: "success", Timestamp: base.Add(-time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
 	events, err := st.ListAudit(ctx, meta.ID, 10)
@@ -68,7 +69,6 @@ func TestAuditAppendAndList(t *testing.T) {
 	if events[0].Action != "ir.patch" || events[0].Actor != "test" {
 		t.Fatalf("unexpected event: %+v", events[0])
 	}
-	base := time.Date(2026, 4, 26, 10, 0, 0, 0, time.UTC)
 	for _, event := range []AuditEvent{
 		{ProjectID: meta.ID, Actor: "Alice", Action: "config.generate", Outcome: "success", TargetEngine: ir.EngineHAProxy, Timestamp: base},
 		{ProjectID: meta.ID, Actor: "Bob", Action: "target.probe", Outcome: "failed", TargetEngine: ir.EngineNginx, Timestamp: base.Add(time.Hour)},

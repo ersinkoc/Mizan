@@ -26,6 +26,19 @@ func TestVaultPutGetDelete(t *testing.T) {
 	if err := v.Put(context.Background(), "target_1", []byte("vault-pass"), secret); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(v.root, "note.txt"), []byte("ignore"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(v.root, "nested.json"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	ids, err := v.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 1 || ids[0] != "target_1" {
+		t.Fatalf("ids=%v", ids)
+	}
 	if data, err := os.ReadFile(v.path("target_1")); err != nil || bytes.Contains(data, []byte("s3cret")) {
 		t.Fatalf("vault file leaked plaintext or read failed data=%s err=%v", data, err)
 	}
@@ -42,11 +55,29 @@ func TestVaultPutGetDelete(t *testing.T) {
 	if err := v.Delete(context.Background(), "target_1"); err != nil {
 		t.Fatal(err)
 	}
+	ids, err = v.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 0 {
+		t.Fatalf("ids after delete=%v", ids)
+	}
 	if _, err := os.Stat(v.path("target_1")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("expected deleted secret, got %v", err)
 	}
 	if err := v.Delete(context.Background(), "target_1"); err != nil {
 		t.Fatal(err)
+	}
+	missingIDs, err := New(filepath.Join(t.TempDir(), "missing")).List(context.Background())
+	if err != nil || len(missingIDs) != 0 {
+		t.Fatalf("missing list ids=%v err=%v", missingIDs, err)
+	}
+	rootFile := filepath.Join(t.TempDir(), "root-file")
+	if err := os.WriteFile(rootFile, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New(rootFile).List(context.Background()); err == nil {
+		t.Fatal("expected root file list error")
 	}
 }
 
@@ -62,6 +93,9 @@ func TestVaultValidationAndContext(t *testing.T) {
 	}
 	if err := v.Delete(ctx, "target_1"); !errors.Is(err, context.Canceled) {
 		t.Fatalf("delete canceled err=%v", err)
+	}
+	if _, err := v.List(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("list canceled err=%v", err)
 	}
 	for _, id := range []string{"", "../x", "a/b", `a\b`, "a..b"} {
 		if err := v.Put(context.Background(), id, []byte("pass"), Secret{}); err == nil {
@@ -168,9 +202,9 @@ func TestVaultRandomAndAtomicWriteErrors(t *testing.T) {
 }
 
 func TestVaultInjectedFileErrors(t *testing.T) {
-	oldMkdirAll, oldReadFile, oldRemove, oldRename, oldWriteFile := mkdirAll, readFile, remove, rename, writeFile
+	oldMkdirAll, oldReadDir, oldReadFile, oldRemove, oldRename, oldStatPath, oldWriteFile := mkdirAll, readDir, readFile, remove, rename, statPath, writeFile
 	t.Cleanup(func() {
-		mkdirAll, readFile, remove, rename, writeFile = oldMkdirAll, oldReadFile, oldRemove, oldRename, oldWriteFile
+		mkdirAll, readDir, readFile, remove, rename, statPath, writeFile = oldMkdirAll, oldReadDir, oldReadFile, oldRemove, oldRename, oldStatPath, oldWriteFile
 	})
 	v := New(t.TempDir())
 	mkdirAll = func(string, os.FileMode) error { return errors.New("mkdir failed") }
@@ -196,6 +230,21 @@ func TestVaultInjectedFileErrors(t *testing.T) {
 	remove = func(string) error { return errors.New("remove failed") }
 	if err := v.Delete(context.Background(), "target_1"); err == nil || err.Error() != "remove failed" {
 		t.Fatalf("expected remove error, got %v", err)
+	}
+	remove = oldRemove
+	statPath = func(string) (os.FileInfo, error) { return nil, errors.New("stat failed") }
+	if _, err := v.List(context.Background()); err == nil || err.Error() != "stat failed" {
+		t.Fatalf("expected stat error, got %v", err)
+	}
+	statPath = oldStatPath
+	readDir = func(string) ([]os.DirEntry, error) { return nil, os.ErrNotExist }
+	ids, err := v.List(context.Background())
+	if err != nil || len(ids) != 0 {
+		t.Fatalf("expected empty missing list ids=%v err=%v", ids, err)
+	}
+	readDir = func(string) ([]os.DirEntry, error) { return nil, errors.New("read dir failed") }
+	if _, err := v.List(context.Background()); err == nil || err.Error() != "read dir failed" {
+		t.Fatalf("expected read dir error, got %v", err)
 	}
 }
 

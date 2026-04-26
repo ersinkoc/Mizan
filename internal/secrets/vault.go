@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -56,9 +57,11 @@ type envelope struct {
 
 var (
 	mkdirAll  = os.MkdirAll
+	readDir   = os.ReadDir
 	readFile  = os.ReadFile
 	remove    = os.Remove
 	rename    = os.Rename
+	statPath  = os.Stat
 	writeFile = os.WriteFile
 )
 
@@ -164,6 +167,39 @@ func (v *Vault) Delete(ctx context.Context, id string) error {
 		return err
 	}
 	return nil
+}
+
+func (v *Vault) List(ctx context.Context) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	info, err := statPath(v.root)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return []string{}, nil
+		}
+		return nil, err
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("secret root %q is not a directory", v.root)
+	}
+	entries, err := readDir(v.root)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return []string{}, nil
+		}
+		return nil, err
+	}
+	ids := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || filepath.Ext(name) != ".json" {
+			continue
+		}
+		ids = append(ids, strings.TrimSuffix(name, ".json"))
+	}
+	sort.Strings(ids)
+	return ids, nil
 }
 
 func newGCM(key []byte) cipher.AEAD {

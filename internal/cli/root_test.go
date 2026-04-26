@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mizanproxy/mizan/internal/secrets"
 	"github.com/mizanproxy/mizan/internal/store"
 )
 
@@ -269,6 +270,58 @@ func TestProjectGenerateValidateAndSnapshotCommands(t *testing.T) {
 	}
 }
 
+func TestSecretCommands(t *testing.T) {
+	home := t.TempDir()
+	keyPath := filepath.Join(t.TempDir(), "id_ed25519")
+	if err := os.WriteFile(keyPath, []byte("PRIVATE KEY"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MIZAN_VAULT_PASSPHRASE", "vault-pass")
+	var stdout, stderr bytes.Buffer
+	if err := Run(context.Background(), []string{"secret", "set", "--home", home, "--id", "target_1", "--username", "root", "--password", "ssh-pass", "--private-key-file", keyPath, "--passphrase", "key-pass", "--token", "api-token"}, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(stdout.Bytes(), []byte(`"status":"stored"`)) {
+		t.Fatalf("secret set output unexpected: %s", stdout.String())
+	}
+	secretPath := filepath.Join(home, "secrets", "target_1.json")
+	if data, err := os.ReadFile(secretPath); err != nil || bytes.Contains(data, []byte("ssh-pass")) || bytes.Contains(data, []byte("PRIVATE KEY")) {
+		t.Fatalf("secret file leaked plaintext data=%q err=%v", string(data), err)
+	}
+	stdout.Reset()
+	if err := Run(context.Background(), []string{"secret", "list", "--home", home}, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(stdout.Bytes(), []byte("target_1")) {
+		t.Fatalf("secret list output unexpected: %s", stdout.String())
+	}
+	stdout.Reset()
+	if err := Run(context.Background(), []string{"secret", "get", "--home", home, "--id", "target_1"}, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(stdout.Bytes(), []byte(`"has_password":true`)) || bytes.Contains(stdout.Bytes(), []byte("ssh-pass")) {
+		t.Fatalf("secret get redacted output unexpected: %s", stdout.String())
+	}
+	stdout.Reset()
+	if err := Run(context.Background(), []string{"secret", "get", "--home", home, "--id", "target_1", "--vault-passphrase", "vault-pass", "--reveal"}, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(stdout.Bytes(), []byte("ssh-pass")) || !bytes.Contains(stdout.Bytes(), []byte("PRIVATE KEY")) {
+		t.Fatalf("secret reveal output unexpected: %s", stdout.String())
+	}
+	stdout.Reset()
+	if err := Run(context.Background(), []string{"secret", "delete", "--home", home, "--id", "target_1"}, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
+	if err := Run(context.Background(), []string{"secret", "list", "--home", home}, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(stdout.String(), "target_1") {
+		t.Fatalf("secret list after delete unexpected: %s", stdout.String())
+	}
+}
+
 func TestProjectImportAndDelete(t *testing.T) {
 	home := t.TempDir()
 	cfgPath := filepath.Join(t.TempDir(), "haproxy.cfg")
@@ -314,6 +367,10 @@ func TestCLIErrorBranches(t *testing.T) {
 	}
 	goodCfg := filepath.Join(t.TempDir(), "haproxy.cfg")
 	if err := os.WriteFile(goodCfg, []byte("frontend web\n  bind :80\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	secretRootHome := t.TempDir()
+	if err := os.WriteFile(filepath.Join(secretRootHome, "secrets"), []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -396,6 +453,22 @@ func TestCLIErrorBranches(t *testing.T) {
 	expectErr("audit", "show", "--home", home, "--project", "p_1", "--target-engine", "bad")
 	expectErr("audit", "show", "--home", home, "--project", "p_1", "--out", filepath.Join(t.TempDir(), "missing", "audit.json"))
 	expectErr("audit", "unknown")
+	expectErr("secret")
+	expectErr("secret", "set", "--bad")
+	expectErr("secret", "set", "--home", home)
+	expectErr("secret", "set", "--home", home, "--id", "target_1")
+	expectErr("secret", "set", "--home", home, "--id", "target_1", "--username", "root")
+	expectErr("secret", "set", "--home", home, "--id", "target_1", "--username", "root", "--vault-passphrase", "pass", "--private-key", "key", "--private-key-file", filepath.Join(t.TempDir(), "missing"))
+	expectErr("secret", "set", "--home", home, "--id", "target_1", "--username", "root", "--vault-passphrase", "pass", "--private-key-file", filepath.Join(t.TempDir(), "missing"))
+	expectErr("secret", "get", "--bad")
+	expectErr("secret", "get", "--home", home)
+	expectErr("secret", "get", "--home", home, "--id", "missing")
+	expectErr("secret", "list", "--bad")
+	expectErr("secret", "list", "--home", secretRootHome)
+	expectErr("secret", "delete", "--bad")
+	expectErr("secret", "delete", "--home", home)
+	expectErr("secret", "delete", "--home", home, "--id", "../x")
+	expectErr("secret", "unknown")
 	expectErr("monitor")
 	expectErr("monitor", "snapshot", "--bad")
 	expectErr("monitor", "snapshot", "--home", home)
@@ -412,6 +485,19 @@ func TestCLIErrorBranches(t *testing.T) {
 	}
 	if got := firstNonEmpty("", ""); got != "" {
 		t.Fatalf("firstNonEmpty empty=%q", got)
+	}
+	if got := secretsRoot("home"); got != filepath.Join("home", "secrets") {
+		t.Fatalf("secretsRoot=%q", got)
+	}
+	t.Setenv("MIZAN_VAULT_PASSPHRASE", "env-pass")
+	if got := string(vaultPassphraseBytes("flag-pass")); got != "flag-pass" {
+		t.Fatalf("vault pass flag=%q", got)
+	}
+	if got := string(vaultPassphraseBytes("")); got != "env-pass" {
+		t.Fatalf("vault pass env=%q", got)
+	}
+	if got := redactSecret(secrets.Secret{Username: "u", Password: "p", PrivateKey: "k", Passphrase: "pp", Token: "t"}); !got.HasPassword || !got.HasPrivateKey || !got.HasPassphrase || !got.HasToken || got.Username != "u" {
+		t.Fatalf("redacted=%+v", got)
 	}
 
 	stdout.Reset()
