@@ -47,6 +47,10 @@ func TestProjectLifecycleEndpoints(t *testing.T) {
 	}
 	id := created.Project.ID
 	version := created.Version
+	res = doJSON(mux, http.MethodGet, "/metrics", nil)
+	if res.Code != http.StatusOK || res.Header().Get("Content-Type") != "text/plain; version=0.0.4; charset=utf-8" || !bytes.Contains(res.Body.Bytes(), []byte("mizan_build_info")) || !bytes.Contains(res.Body.Bytes(), []byte("mizan_projects_total 1")) {
+		t.Fatalf("metrics status=%d type=%q body=%s", res.Code, res.Header().Get("Content-Type"), res.Body.String())
+	}
 
 	for _, tc := range []struct {
 		method string
@@ -815,6 +819,7 @@ func TestAPIStoreAndNativeFailureBranches(t *testing.T) {
 		body   any
 		status int
 	}{
+		{http.MethodGet, "/metrics", nil, http.StatusInternalServerError},
 		{http.MethodGet, "/api/v1/projects", nil, http.StatusInternalServerError},
 		{http.MethodPost, "/api/v1/projects", map[string]string{"name": "bad"}, http.StatusInternalServerError},
 		{http.MethodPost, "/api/v1/projects/import", map[string]string{"filename": "haproxy.cfg", "config": "frontend web\n  bind :80\n"}, http.StatusInternalServerError},

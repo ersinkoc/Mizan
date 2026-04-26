@@ -7,6 +7,7 @@ The current codebase is a working product foundation with backend statement cove
 ## What Works Today
 
 - Single-binary Go CLI and HTTP server: `mizan serve`
+- Health, readiness, version, and Prometheus-style `/metrics` endpoints
 - Embedded React WebUI with project creation, import, IR editing, generation, validation, snapshots, diff, audit, topology, and deployment-target panels
 - Project CRUD and filesystem persistence under `~/.mizan/projects`
 - Project export endpoint, CLI command, and WebUI download for portable JSON backups

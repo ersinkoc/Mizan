@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/mizanproxy/mizan/internal/deploy"
@@ -42,6 +43,7 @@ func Register(mux *http.ServeMux, st *store.Store) {
 	h := &Handler{store: st}
 	mux.HandleFunc("GET /healthz", h.health)
 	mux.HandleFunc("GET /readyz", h.health)
+	mux.HandleFunc("GET /metrics", h.metrics)
 	mux.HandleFunc("GET /version", h.version)
 	mux.HandleFunc("GET /api/v1/projects", h.listProjects)
 	mux.HandleFunc("POST /api/v1/projects", h.createProject)
@@ -79,6 +81,25 @@ func (h *Handler) health(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) version(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"version": version.Version, "commit": version.Commit, "date": version.Date})
+}
+
+func (h *Handler) metrics(w http.ResponseWriter, r *http.Request) {
+	projects, err := h.store.ListProjects(r.Context())
+	if err != nil {
+		writeProblem(w, http.StatusInternalServerError, err)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+	_, _ = fmt.Fprintf(w, "# HELP mizan_build_info Build information for this Mizan binary.\n")
+	_, _ = fmt.Fprintf(w, "# TYPE mizan_build_info gauge\n")
+	_, _ = fmt.Fprintf(w, "mizan_build_info{version=\"%s\",commit=\"%s\",date=\"%s\"} 1\n", prometheusLabelValue(version.Version), prometheusLabelValue(version.Commit), prometheusLabelValue(version.Date))
+	_, _ = fmt.Fprintf(w, "# HELP mizan_projects_total Number of projects visible in the configured data root.\n")
+	_, _ = fmt.Fprintf(w, "# TYPE mizan_projects_total gauge\n")
+	_, _ = fmt.Fprintf(w, "mizan_projects_total %d\n", len(projects))
+}
+
+func prometheusLabelValue(value string) string {
+	return strings.NewReplacer(`\`, `\\`, "\n", `\n`, `"`, `\"`).Replace(value)
 }
 
 func (h *Handler) listProjects(w http.ResponseWriter, r *http.Request) {

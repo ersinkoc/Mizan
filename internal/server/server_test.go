@@ -19,6 +19,12 @@ func TestServerRoutesAndSPA(t *testing.T) {
 	if res.Code != http.StatusOK {
 		t.Fatalf("health status=%d", res.Code)
 	}
+	req = httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	res = httptest.NewRecorder()
+	srv.Handler.ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("metrics status=%d", res.Code)
+	}
 	req = httptest.NewRequest(http.MethodGet, "/some/spa/path", nil)
 	res = httptest.NewRecorder()
 	srv.Handler.ServeHTTP(res, req)

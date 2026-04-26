@@ -7,6 +7,7 @@ Mizan is a local-first visual configuration architect for HAProxy and Nginx. It 
 ```mermaid
 flowchart LR
   Foundation["Foundation\nGo CLI + HTTP server\nEmbedded React UI"]:::done
+  Metrics["System Metrics\n/metrics Prometheus text\nbuild + project count"]:::done
   ProjectExport["Project Export\nPortable JSON backup\nIR + targets"]:::done
   IR["Universal IR\nLint, mutate, hash\nSnapshots"]:::done
   Import["Import\nBasic HAProxy/Nginx parser"]:::done
@@ -25,6 +26,7 @@ flowchart LR
   Deploy["SSH Deploy\nNot implemented yet"]:::todo
   ProjectStream["Non-audit Project Streams\nNot implemented yet"]:::todo
 
+  Foundation --> Metrics
   Foundation --> ProjectExport
   Foundation --> IR --> Import --> Generate --> Validate
   IR --> Topology
@@ -576,6 +578,11 @@ mindmap
       delete
       import
       export
+    System
+      healthz
+      readyz
+      version
+      metrics
     IR
       lint
       mutate
