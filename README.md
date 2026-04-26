@@ -7,6 +7,7 @@ The current codebase is a working product foundation with backend statement cove
 ## What Works Today
 
 - Single-binary Go CLI and HTTP server: `mizan serve`
+- Optional Bearer token or Basic auth for HTTP access, required when binding outside localhost
 - Health, readiness, version, and Prometheus-style `/metrics` endpoints with build, project, and HTTP request counters
 - Embedded React WebUI with project creation, import, IR editing, generation, validation, snapshots, diff, audit, topology, and deployment-target panels
 - Project CRUD and filesystem persistence under `~/.mizan/projects`
@@ -38,6 +39,13 @@ go run ./cmd/mizan serve --bind 127.0.0.1:7890
 ```
 
 Open `http://127.0.0.1:7890`.
+
+When binding outside localhost, Mizan requires HTTP auth:
+
+```sh
+go run ./cmd/mizan serve --bind 0.0.0.0:7890 --auth-token "$MIZAN_AUTH_TOKEN"
+go run ./cmd/mizan serve --bind 0.0.0.0:7890 --auth-basic operator:change-me
+```
 
 If you already built the embedded binary on Windows:
 

@@ -31,7 +31,7 @@ func TestRunVersionAndUnknown(t *testing.T) {
 
 func TestServeInvalidBindReturnsError(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	err := Run(context.Background(), []string{"serve", "--home", t.TempDir(), "--bind", "bad address"}, &stdout, &stderr)
+	err := Run(context.Background(), []string{"serve", "--home", t.TempDir(), "--bind", "bad address", "--auth-token", "secret"}, &stdout, &stderr)
 	if err == nil {
 		t.Fatal("expected serve error for invalid bind")
 	}
@@ -49,6 +49,31 @@ func TestRunDefaultServeStopsCleanly(t *testing.T) {
 	}
 	if !bytes.Contains(stdout.Bytes(), []byte("Mizan serving")) {
 		t.Fatalf("unexpected serve output: %s", stdout.String())
+	}
+}
+
+func TestServeAuthConfiguration(t *testing.T) {
+	oldListenAndServe := listenAndServe
+	t.Cleanup(func() { listenAndServe = oldListenAndServe })
+	listenAndServe = func(*http.Server) error {
+		return http.ErrServerClosed
+	}
+	var stdout, stderr bytes.Buffer
+	if err := Run(context.Background(), []string{"serve", "--home", t.TempDir(), "--bind", "0.0.0.0:7890"}, &stdout, &stderr); err == nil {
+		t.Fatal("expected external bind auth error")
+	}
+	stdout.Reset()
+	if err := Run(context.Background(), []string{"serve", "--home", t.TempDir(), "--bind", "0.0.0.0:7890", "--auth-basic", "operator:pass"}, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MIZAN_AUTH_TOKEN", "from-env")
+	stdout.Reset()
+	if err := Run(context.Background(), []string{"serve", "--home", t.TempDir(), "--bind", "0.0.0.0:7891"}, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
+	if err := Run(context.Background(), []string{"serve", "--home", t.TempDir(), "--auth-basic", "bad"}, &stdout, &stderr); err == nil {
+		t.Fatal("expected bad basic credential error")
 	}
 }
 
@@ -381,6 +406,13 @@ func TestCLIErrorBranches(t *testing.T) {
 	expectErr("monitor", "stream", "--home", home, "--project", "p_1", "--interval", "0s")
 	expectErr("monitor", "stream", "--home", home, "--project", "missing", "--limit", "1")
 	expectErr("monitor", "unknown")
+
+	if got := firstNonEmpty("", "fallback", "later"); got != "fallback" {
+		t.Fatalf("firstNonEmpty=%q", got)
+	}
+	if got := firstNonEmpty("", ""); got != "" {
+		t.Fatalf("firstNonEmpty empty=%q", got)
+	}
 
 	stdout.Reset()
 	if err := Run(context.Background(), []string{"project", "new", "--home", home, "positional"}, &stdout, &stderr); err != nil {

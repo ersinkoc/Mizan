@@ -87,15 +87,30 @@ func serve(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	fs.SetOutput(stderr)
 	bind := fs.String("bind", "127.0.0.1:7890", "address to bind")
 	home := fs.String("home", store.DefaultRoot(), "Mizan data directory")
+	authToken := fs.String("auth-token", "", "bearer token required for HTTP access")
+	authBasic := fs.String("auth-basic", "", "basic auth credential as user:password")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	auth := server.AuthConfig{Token: firstNonEmpty(*authToken, os.Getenv("MIZAN_AUTH_TOKEN"))}
+	basic := firstNonEmpty(*authBasic, os.Getenv("MIZAN_AUTH_BASIC"))
+	if basic != "" {
+		user, password, err := server.ParseBasicCredential(basic)
+		if err != nil {
+			return err
+		}
+		auth.BasicUser = user
+		auth.BasicPassword = password
+	}
+	if server.RequiresAuth(*bind) && !auth.Enabled() {
+		return errors.New("auth is required when binding outside localhost; set --auth-token, --auth-basic, MIZAN_AUTH_TOKEN, or MIZAN_AUTH_BASIC")
 	}
 	log := slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	st := store.New(*home)
 	if err := st.Bootstrap(ctx); err != nil {
 		return err
 	}
-	srv := server.New(server.Config{Bind: *bind}, st, log)
+	srv := server.New(server.Config{Bind: *bind, Auth: auth}, st, log)
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go func() {
@@ -774,6 +789,15 @@ func splitCSV(v string) []string {
 		}
 	}
 	return items
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func usage(w io.Writer) {

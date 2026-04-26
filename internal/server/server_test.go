@@ -43,6 +43,87 @@ func TestServerRoutesAndSPA(t *testing.T) {
 	}
 }
 
+func TestServerAuth(t *testing.T) {
+	st := store.New(t.TempDir())
+	srv := New(Config{Auth: AuthConfig{Token: "secret", BasicUser: "operator", BasicPassword: "pass"}}, st, slog.Default())
+
+	for _, path := range []string{"/healthz", "/readyz"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		res := httptest.NewRecorder()
+		srv.Handler.ServeHTTP(res, req)
+		if res.Code != http.StatusOK {
+			t.Fatalf("public path %s status=%d", path, res.Code)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/version", nil)
+	res := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(res, req)
+	if res.Code != http.StatusUnauthorized || res.Header().Get("WWW-Authenticate") != `Basic realm="Mizan"` {
+		t.Fatalf("unauthorized status=%d authenticate=%q", res.Code, res.Header().Get("WWW-Authenticate"))
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/version", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	res = httptest.NewRecorder()
+	srv.Handler.ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("bearer status=%d", res.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/version", nil)
+	req.SetBasicAuth("operator", "pass")
+	res = httptest.NewRecorder()
+	srv.Handler.ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("basic status=%d", res.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/version", nil)
+	req.SetBasicAuth("operator", "wrong")
+	res = httptest.NewRecorder()
+	srv.Handler.ServeHTTP(res, req)
+	if res.Code != http.StatusUnauthorized {
+		t.Fatalf("bad basic status=%d", res.Code)
+	}
+
+	if (AuthConfig{}).authorized(httptest.NewRequest(http.MethodGet, "/version", nil)) {
+		t.Fatal("empty auth config should not authorize")
+	}
+}
+
+func TestAuthHelpers(t *testing.T) {
+	user, password, err := ParseBasicCredential("operator:pass:with:colon")
+	if err != nil || user != "operator" || password != "pass:with:colon" {
+		t.Fatalf("basic user=%q password=%q err=%v", user, password, err)
+	}
+	for _, bad := range []string{"", "operator", ":pass", "operator:"} {
+		if _, _, err := ParseBasicCredential(bad); err == nil {
+			t.Fatalf("expected basic credential error for %q", bad)
+		}
+	}
+	for bind, want := range map[string]bool{
+		"127.0.0.1:7890":     false,
+		"localhost:7890":     false,
+		"[::1]:7890":         false,
+		"0.0.0.0:7890":       true,
+		":7890":              true,
+		"192.168.1.10:7890":  true,
+		"mizan.example:7890": true,
+		"bad bind":           true,
+	} {
+		if got := RequiresAuth(bind); got != want {
+			t.Fatalf("RequiresAuth(%q)=%v want %v", bind, got, want)
+		}
+	}
+	if !constantTimeEqual("same", "same") || constantTimeEqual("same", "different") {
+		t.Fatal("constant time compare mismatch")
+	}
+	if !authPublicPath("/healthz") || !authPublicPath("/readyz") || authPublicPath("/version") {
+		t.Fatal("unexpected public path classification")
+	}
+}
+
 func TestRecoverer(t *testing.T) {
 	handler := recoverer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		panic("boom")
