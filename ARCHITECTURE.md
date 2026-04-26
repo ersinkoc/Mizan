@@ -16,8 +16,9 @@ flowchart LR
   Targets["Target Registry\nTargets + clusters\nWebUI panel"]:::done
   DeployPlan["Deploy Plan\nDry-run rollout steps\nAudit event"]:::done
   MonitorBase["Monitor Snapshot\nTarget health contract\nAPI + CLI + WebUI"]:::done
+  HAProxyMonitor["HAProxy Monitor\nshow stat CSV parser\nhealth summary"]:::done
   Deploy["SSH Deploy\nNot implemented yet"]:::todo
-  Monitor["Live Collectors\nNot implemented yet"]:::todo
+  Monitor["Nginx Collector\nNot implemented yet"]:::todo
 
   Foundation --> IR --> Import --> Generate --> Validate
   IR --> Topology
@@ -27,6 +28,7 @@ flowchart LR
   DeployPlan --> Deploy
   Validate --> Deploy
   Targets --> MonitorBase
+  MonitorBase --> HAProxyMonitor
   MonitorBase --> Monitor
 
   classDef done fill:#dff7ea,stroke:#2b8a57,color:#153b27;
@@ -295,7 +297,7 @@ mizan monitor snapshot --project <id>
 Targets and clusters can also be managed from the CLI:
 
 ```sh
-mizan target add --project <id> --name edge-01 --host 10.0.0.10 --engine haproxy
+mizan target add --project <id> --name edge-01 --host 10.0.0.10 --engine haproxy --monitor-endpoint 'http://10.0.0.10:8404/;csv'
 mizan target list --project <id>
 mizan cluster add --project <id> --name prod --target-ids <target-id>
 mizan cluster list --project <id>
@@ -309,17 +311,26 @@ CLI deploy defaults to dry-run planning. Passing `--execute` switches to the rea
 flowchart LR
   Store["targets.json"]
   Monitor["internal/monitor\nSnapshotTargets"]
+  HAProxy["HAProxy endpoint\nshow stat CSV"]
+  Parser["ParseHAProxyStats\nserver rows + states"]
+  Summary["Summary\nhealthy / warning / failed"]
   API["GET /monitor/snapshot"]
   CLI["mizan monitor snapshot"]
   UI["WebUI Monitor panel"]
 
   Store --> Monitor
+  Monitor -->|haproxy + monitor_endpoint| HAProxy
+  HAProxy --> Parser
+  Parser --> Summary
+  Summary --> Monitor
   Monitor --> API
   Monitor --> CLI
   API --> UI
 ```
 
-The current monitoring layer exposes a stable snapshot contract for registered targets. Until live HAProxy Runtime API and Nginx collectors are wired in, targets report `unknown` with an explicit "collector not configured" message. This gives the API, CLI, and WebUI a working surface that future collectors can populate without reshaping consumers.
+The monitoring layer exposes a stable snapshot contract for registered targets. HAProxy targets can now provide a `monitor_endpoint` that returns HAProxy `show stat` CSV, commonly exposed by HAProxy stats HTTP endpoints. Mizan parses backend server rows, ignores aggregate `FRONTEND` and `BACKEND` rows, and summarizes the target as `healthy`, `warning`, or `failed`.
+
+Nginx monitor endpoints are recorded on targets but still return `unknown` with an explicit "not implemented yet" message. Targets without a monitor endpoint also return `unknown`, which keeps the API, CLI, and WebUI behavior predictable while more collectors are added.
 
 ## Topology Editing
 
@@ -526,6 +537,7 @@ mindmap
       snapshot API
       CLI snapshot
       WebUI panel
+      HAProxy show stat CSV
       unknown collector state
     Snapshot Diff
       structural tree
@@ -568,7 +580,7 @@ flowchart LR
   SSH["SSH deployment"]
   Rollout["Cluster rollout orchestration"]
   Secrets["Encrypted secrets vault"]
-  Monitor["Live HAProxy/Nginx monitoring"]
+  Monitor["Nginx live monitoring"]
   SSE["SSE project/monitor streams"]
   FullParser["Full round-trip parsers"]
   Wizard["Full wizard UI"]

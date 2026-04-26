@@ -17,7 +17,8 @@ The current codebase is a working product foundation with backend statement cove
 - Append-only project audit log in `audit.jsonl`
 - Deployment targets and clusters persisted in `targets.json`
 - Deployment dry-run planning for single targets or clusters via generated rollout steps
-- Monitor snapshot foundation for registered targets through API, CLI, and WebUI
+- Monitor snapshots for registered targets through API, CLI, and WebUI
+- HAProxy monitor endpoint support for `show stat` CSV health summaries
 - Topology canvas with drag/connect gestures that update the IR
 
 ## Run
@@ -50,7 +51,7 @@ go run ./cmd/mizan project import ./haproxy.cfg --name imported-edge
 go run ./cmd/mizan project list
 go run ./cmd/mizan snapshot list --project <id>
 go run ./cmd/mizan snapshot tag --project <id> --label release-1 <snapshot-ref>
-go run ./cmd/mizan target add --project <id> --name edge-01 --host 10.0.0.10 --engine haproxy
+go run ./cmd/mizan target add --project <id> --name edge-01 --host 10.0.0.10 --engine haproxy --monitor-endpoint 'http://10.0.0.10:8404/;csv'
 go run ./cmd/mizan cluster add --project <id> --name prod --target-ids <target-id>
 go run ./cmd/mizan generate --project <id> --target haproxy
 go run ./cmd/mizan validate --project <id> --target nginx

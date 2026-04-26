@@ -167,6 +167,7 @@ export interface Target {
   reload_command: string;
   sudo: boolean;
   post_reload_probe?: string;
+  monitor_endpoint?: string;
   created_at: string;
   updated_at: string;
 }

@@ -22,6 +22,7 @@ type Target struct {
 	ReloadCommand   string    `json:"reload_command"`
 	Sudo            bool      `json:"sudo"`
 	PostReloadProbe string    `json:"post_reload_probe,omitempty"`
+	MonitorEndpoint string    `json:"monitor_endpoint,omitempty"`
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
 }

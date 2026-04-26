@@ -88,7 +88,7 @@ func TestProjectGenerateValidateAndSnapshotCommands(t *testing.T) {
 		t.Fatalf("validate output unexpected: %s", stdout.String())
 	}
 	stdout.Reset()
-	if err := Run(context.Background(), []string{"target", "add", "--home", home, "--project", created.Project.ID, "--name", "edge-01", "--host", "lb1.example.com", "--engine", "haproxy", "--sudo", "--post-reload-probe", "https://edge.example.com/healthz"}, &stdout, &stderr); err != nil {
+	if err := Run(context.Background(), []string{"target", "add", "--home", home, "--project", created.Project.ID, "--name", "edge-01", "--host", "lb1.example.com", "--engine", "haproxy", "--sudo", "--post-reload-probe", "https://edge.example.com/healthz", "--monitor-endpoint", "https://edge.example.com/haproxy?stats;csv"}, &stdout, &stderr); err != nil {
 		t.Fatal(err)
 	}
 	var target store.Target
@@ -96,7 +96,7 @@ func TestProjectGenerateValidateAndSnapshotCommands(t *testing.T) {
 		t.Fatal(err)
 	}
 	stdout.Reset()
-	if err := Run(context.Background(), []string{"target", "add", "--home", home, "--project", created.Project.ID, "--id", target.ID, "--name", "edge-01b", "--host", "lb1.example.com", "--engine", "nginx", "--config-path", "/etc/nginx/nginx.conf", "--reload-command", "systemctl reload nginx"}, &stdout, &stderr); err != nil {
+	if err := Run(context.Background(), []string{"target", "add", "--home", home, "--project", created.Project.ID, "--id", target.ID, "--name", "edge-01b", "--host", "lb1.example.com", "--engine", "nginx", "--config-path", "/etc/nginx/nginx.conf", "--reload-command", "systemctl reload nginx", "--monitor-endpoint", "https://edge.example.com/status"}, &stdout, &stderr); err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Contains(stdout.Bytes(), []byte("edge-01b")) {

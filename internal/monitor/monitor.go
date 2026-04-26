@@ -48,14 +48,13 @@ func SnapshotTargets(ctx context.Context, st *store.Store, projectID string, now
 		Targets:     make([]TargetSnapshot, 0, len(targets.Targets)),
 	}
 	for _, target := range targets.Targets {
-		snapshot.Targets = append(snapshot.Targets, TargetSnapshot{
-			TargetID: target.ID,
-			Name:     target.Name,
-			Host:     target.Host,
-			Engine:   target.Engine,
-			Status:   "unknown",
-			Message:  "runtime collector is not configured",
-		})
+		targetSnapshot := baseTargetSnapshot(target, "unknown", "runtime collector is not configured")
+		if target.Engine == ir.EngineHAProxy {
+			targetSnapshot, _ = CollectHAProxy(ctx, target)
+		} else if target.MonitorEndpoint != "" {
+			targetSnapshot.Message = "nginx runtime collector is not implemented yet"
+		}
+		snapshot.Targets = append(snapshot.Targets, targetSnapshot)
 	}
 	snapshot.Summary = summarize(snapshot.Targets)
 	return snapshot, nil

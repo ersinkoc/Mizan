@@ -309,6 +309,7 @@ func targetCmd(ctx context.Context, args []string, stdout, stderr io.Writer) err
 		reloadCommand := fs.String("reload-command", "", "remote reload command")
 		sudo := fs.Bool("sudo", false, "run install/reload through sudo")
 		probe := fs.String("post-reload-probe", "", "optional HTTP probe URL")
+		monitorEndpoint := fs.String("monitor-endpoint", "", "optional runtime monitor endpoint")
 		if err := fs.Parse(args[1:]); err != nil {
 			return err
 		}
@@ -326,6 +327,7 @@ func targetCmd(ctx context.Context, args []string, stdout, stderr io.Writer) err
 			ReloadCommand:   *reloadCommand,
 			Sudo:            *sudo,
 			PostReloadProbe: *probe,
+			MonitorEndpoint: *monitorEndpoint,
 		})
 		if err != nil {
 			return err

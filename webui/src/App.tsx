@@ -284,7 +284,8 @@ export function App() {
         config_path: String(formData.get('config_path') || ''),
         reload_command: String(formData.get('reload_command') || ''),
         sudo: formData.get('sudo') === 'on',
-        post_reload_probe: String(formData.get('post_reload_probe') || '')
+        post_reload_probe: String(formData.get('post_reload_probe') || ''),
+        monitor_endpoint: String(formData.get('monitor_endpoint') || '')
       });
       await reloadTargets(active.id);
       await reloadMonitor(active.id);
@@ -606,6 +607,7 @@ export function App() {
               <input name="config_path" placeholder="/etc/haproxy/haproxy.cfg" aria-label="Remote config path" />
               <input name="reload_command" placeholder="systemctl reload haproxy" aria-label="Reload command" />
               <input name="post_reload_probe" placeholder="https://edge.example.com/healthz" aria-label="Post reload probe" />
+              <input name="monitor_endpoint" placeholder="https://edge.example.com/haproxy?stats;csv" aria-label="Monitor endpoint" />
               <label className="check-line"><input type="checkbox" name="sudo" /> Use sudo</label>
               <button type="submit" disabled={!active || busy}><Plus size={16} /> Add Target</button>
             </form>
@@ -619,6 +621,7 @@ export function App() {
                     <span>{item.user}@{item.host}:{item.port}</span>
                   </div>
                   <small>{item.engine} to {item.config_path}</small>
+                  {item.monitor_endpoint && <small>monitor {item.monitor_endpoint}</small>}
                   <code>{item.reload_command}</code>
                   <div className="target-card-actions">
                     <button onClick={() => previewDeployTarget(item.id)} disabled={busy} title="Preview deployment">
