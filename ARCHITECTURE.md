@@ -17,8 +17,9 @@ flowchart LR
   DeployPlan["Deploy Plan\nDry-run rollout steps\nAudit event"]:::done
   MonitorBase["Monitor Snapshot\nTarget health contract\nAPI + CLI + WebUI"]:::done
   HAProxyMonitor["HAProxy Monitor\nshow stat CSV parser\nhealth summary"]:::done
+  NginxMonitor["Nginx Monitor\nstub_status parser\nconnection summary"]:::done
   Deploy["SSH Deploy\nNot implemented yet"]:::todo
-  Monitor["Nginx Collector\nNot implemented yet"]:::todo
+  Monitor["Live Streams\nNot implemented yet"]:::todo
 
   Foundation --> IR --> Import --> Generate --> Validate
   IR --> Topology
@@ -29,7 +30,9 @@ flowchart LR
   Validate --> Deploy
   Targets --> MonitorBase
   MonitorBase --> HAProxyMonitor
-  MonitorBase --> Monitor
+  MonitorBase --> NginxMonitor
+  HAProxyMonitor --> Monitor
+  NginxMonitor --> Monitor
 
   classDef done fill:#dff7ea,stroke:#2b8a57,color:#153b27;
   classDef todo fill:#fff3cd,stroke:#a36b00,color:#4a3100;
@@ -312,7 +315,9 @@ flowchart LR
   Store["targets.json"]
   Monitor["internal/monitor\nSnapshotTargets"]
   HAProxy["HAProxy endpoint\nshow stat CSV"]
+  Nginx["Nginx endpoint\nstub_status text"]
   Parser["ParseHAProxyStats\nserver rows + states"]
+  NginxParser["ParseNginxStubStatus\nconnection counters"]
   Summary["Summary\nhealthy / warning / failed"]
   API["GET /monitor/snapshot"]
   CLI["mizan monitor snapshot"]
@@ -320,8 +325,11 @@ flowchart LR
 
   Store --> Monitor
   Monitor -->|haproxy + monitor_endpoint| HAProxy
+  Monitor -->|nginx + monitor_endpoint| Nginx
   HAProxy --> Parser
+  Nginx --> NginxParser
   Parser --> Summary
+  NginxParser --> Summary
   Summary --> Monitor
   Monitor --> API
   Monitor --> CLI
@@ -330,7 +338,9 @@ flowchart LR
 
 The monitoring layer exposes a stable snapshot contract for registered targets. HAProxy targets can now provide a `monitor_endpoint` that returns HAProxy `show stat` CSV, commonly exposed by HAProxy stats HTTP endpoints. Mizan parses backend server rows, ignores aggregate `FRONTEND` and `BACKEND` rows, and summarizes the target as `healthy`, `warning`, or `failed`.
 
-Nginx monitor endpoints are recorded on targets but still return `unknown` with an explicit "not implemented yet" message. Targets without a monitor endpoint also return `unknown`, which keeps the API, CLI, and WebUI behavior predictable while more collectors are added.
+Nginx targets can provide a `monitor_endpoint` that returns OSS `stub_status` text. Mizan parses active connections, accepted/handled/request counters, and reading/writing/waiting gauges. Parsed Nginx snapshots are `healthy` unless accepted connections exceed handled connections, which is surfaced as `warning`.
+
+Targets without a monitor endpoint return `unknown`, which keeps the API, CLI, and WebUI behavior predictable while richer collectors and streaming are added.
 
 ## Topology Editing
 
@@ -538,6 +548,7 @@ mindmap
       CLI snapshot
       WebUI panel
       HAProxy show stat CSV
+      Nginx stub_status
       unknown collector state
     Snapshot Diff
       structural tree
@@ -580,7 +591,7 @@ flowchart LR
   SSH["SSH deployment"]
   Rollout["Cluster rollout orchestration"]
   Secrets["Encrypted secrets vault"]
-  Monitor["Nginx live monitoring"]
+  Monitor["Monitor SSE streams"]
   SSE["SSE project/monitor streams"]
   FullParser["Full round-trip parsers"]
   Wizard["Full wizard UI"]
@@ -593,7 +604,7 @@ flowchart LR
   DiffUI --> Wizard
 ```
 
-The codebase is now a working product foundation, not yet a full v1 implementation. Target and cluster persistence plus dry-run deployment planning exist, but real SSH execution, credential handling, and staged rollout safety gates are still future work. The next largest architectural slices are deployment execution, monitoring, full parser round-trip, richer wizard editing, and deeper diff UI.
+The codebase is now a working product foundation, not yet a full v1 implementation. Target and cluster persistence plus dry-run deployment planning exist, and HAProxy/Nginx monitor snapshots can be collected from HTTP endpoints. Real SSH execution, credential handling, staged rollout safety gates, monitor streams, full parser round-trip, richer wizard editing, and deeper diff UI are still future work.
 
 ## Design Principles
 

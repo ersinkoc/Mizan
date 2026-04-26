@@ -69,7 +69,10 @@ func TestSummarize(t *testing.T) {
 func TestSnapshotTargetsWithHAProxyAndNginxMonitorEndpoints(t *testing.T) {
 	oldFetchURL := fetchURL
 	t.Cleanup(func() { fetchURL = oldFetchURL })
-	fetchURL = func(context.Context, string) ([]byte, error) {
+	fetchURL = func(_ context.Context, url string) ([]byte, error) {
+		if url == "http://nginx/status" {
+			return []byte(nginxStubStatus), nil
+		}
 		return []byte(haproxyUpCSV), nil
 	}
 	st := store.New(t.TempDir())
@@ -87,10 +90,10 @@ func TestSnapshotTargetsWithHAProxyAndNginxMonitorEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snapshot.Summary.TotalTargets != 2 || snapshot.Summary.Healthy != 1 || snapshot.Summary.Unknown != 1 {
+	if snapshot.Summary.TotalTargets != 2 || snapshot.Summary.Healthy != 2 {
 		t.Fatalf("summary=%+v targets=%+v", snapshot.Summary, snapshot.Targets)
 	}
-	if snapshot.Targets[1].Name != "nginx" || snapshot.Targets[1].Message != "nginx runtime collector is not implemented yet" {
+	if snapshot.Targets[1].Name != "nginx" || snapshot.Targets[1].Status != "healthy" {
 		t.Fatalf("unexpected nginx snapshot: %+v", snapshot.Targets)
 	}
 }

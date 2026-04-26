@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -52,6 +53,10 @@ func TestRunDefaultServeStopsCleanly(t *testing.T) {
 func TestProjectGenerateValidateAndSnapshotCommands(t *testing.T) {
 	home := t.TempDir()
 	var stdout, stderr bytes.Buffer
+	statusServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("Active connections: 1\nserver accepts handled requests\n1 1 2\nReading: 0 Writing: 1 Waiting: 0\n"))
+	}))
+	defer statusServer.Close()
 	if err := Run(context.Background(), []string{"project", "new", "--home", home, "--name", "edge", "--engines", "haproxy,nginx"}, &stdout, &stderr); err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +101,7 @@ func TestProjectGenerateValidateAndSnapshotCommands(t *testing.T) {
 		t.Fatal(err)
 	}
 	stdout.Reset()
-	if err := Run(context.Background(), []string{"target", "add", "--home", home, "--project", created.Project.ID, "--id", target.ID, "--name", "edge-01b", "--host", "lb1.example.com", "--engine", "nginx", "--config-path", "/etc/nginx/nginx.conf", "--reload-command", "systemctl reload nginx", "--monitor-endpoint", "https://edge.example.com/status"}, &stdout, &stderr); err != nil {
+	if err := Run(context.Background(), []string{"target", "add", "--home", home, "--project", created.Project.ID, "--id", target.ID, "--name", "edge-01b", "--host", "lb1.example.com", "--engine", "nginx", "--config-path", "/etc/nginx/nginx.conf", "--reload-command", "systemctl reload nginx", "--monitor-endpoint", statusServer.URL}, &stdout, &stderr); err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Contains(stdout.Bytes(), []byte("edge-01b")) {
@@ -149,7 +154,7 @@ func TestProjectGenerateValidateAndSnapshotCommands(t *testing.T) {
 	if err := Run(context.Background(), []string{"monitor", "snapshot", "--home", home, "--project", created.Project.ID}, &stdout, &stderr); err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(stdout.Bytes(), []byte(`"unknown":1`)) || !bytes.Contains(stdout.Bytes(), []byte("edge-01b")) {
+	if !bytes.Contains(stdout.Bytes(), []byte(`"healthy":1`)) || !bytes.Contains(stdout.Bytes(), []byte("edge-01b")) {
 		t.Fatalf("monitor output unexpected: %s", stdout.String())
 	}
 	st := store.New(home)
