@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/mizanproxy/mizan/internal/store"
 )
@@ -156,6 +157,13 @@ func TestProjectGenerateValidateAndSnapshotCommands(t *testing.T) {
 	}
 	if !bytes.Contains(stdout.Bytes(), []byte(`"healthy":1`)) || !bytes.Contains(stdout.Bytes(), []byte("edge-01b")) {
 		t.Fatalf("monitor output unexpected: %s", stdout.String())
+	}
+	stdout.Reset()
+	if err := Run(context.Background(), []string{"monitor", "stream", "--home", home, "--project", created.Project.ID, "--limit", "2", "--interval", "1ms"}, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if count := bytes.Count(stdout.Bytes(), []byte(`"project_id"`)); count != 2 {
+		t.Fatalf("monitor stream output count=%d body=%s", count, stdout.String())
 	}
 	st := store.New(home)
 	events, err := st.ListAudit(context.Background(), created.Project.ID, 10)
@@ -324,6 +332,11 @@ func TestCLIErrorBranches(t *testing.T) {
 	expectErr("monitor", "snapshot", "--bad")
 	expectErr("monitor", "snapshot", "--home", home)
 	expectErr("monitor", "snapshot", "--home", home, "--project", "missing")
+	expectErr("monitor", "stream", "--bad")
+	expectErr("monitor", "stream", "--home", home)
+	expectErr("monitor", "stream", "--home", home, "--project", "p_1", "--limit", "-1")
+	expectErr("monitor", "stream", "--home", home, "--project", "p_1", "--interval", "0s")
+	expectErr("monitor", "stream", "--home", home, "--project", "missing", "--limit", "1")
 	expectErr("monitor", "unknown")
 
 	stdout.Reset()
@@ -351,6 +364,30 @@ func TestCLIErrorBranches(t *testing.T) {
 		t.Fatalf("unexpected generated file data=%q err=%v", string(data), err)
 	}
 	expectErr("generate", "--home", home, "--project", created.Project.ID, "--out", filepath.Join(t.TempDir(), "missing", "x.cfg"))
+}
+
+func TestStreamSnapshotsBranches(t *testing.T) {
+	st := store.New(t.TempDir())
+	meta, _, _, err := st.CreateProject(t.Context(), "edge", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := streamSnapshots(ctx, st, meta.ID, 0, time.Millisecond, &bytes.Buffer{}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected canceled before first snapshot, got %v", err)
+	}
+	ctx, cancel = context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(time.Millisecond)
+		cancel()
+	}()
+	if err := streamSnapshots(ctx, st, meta.ID, 0, time.Hour, &bytes.Buffer{}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected canceled while waiting, got %v", err)
+	}
+	if err := streamSnapshots(context.Background(), st, meta.ID, 1, time.Millisecond, errWriter{}); err == nil {
+		t.Fatal("expected writer error")
+	}
 }
 
 func TestSnapshotInjectedStoreErrors(t *testing.T) {
@@ -385,4 +422,10 @@ func TestParseEngines(t *testing.T) {
 	if items := splitCSV(" a, ,b "); len(items) != 2 || items[0] != "a" || items[1] != "b" {
 		t.Fatalf("items=%v", items)
 	}
+}
+
+type errWriter struct{}
+
+func (errWriter) Write([]byte) (int, error) {
+	return 0, errors.New("write failed")
 }

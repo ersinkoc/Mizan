@@ -297,6 +297,7 @@ The same flow is exposed from the CLI:
 mizan deploy --project <id> --target-id <target-id>
 mizan deploy --project <id> --cluster-id <cluster-id>
 mizan monitor snapshot --project <id>
+mizan monitor stream --project <id> --limit 10 --interval 5s
 ```
 
 Targets and clusters can also be managed from the CLI:
@@ -324,6 +325,7 @@ flowchart LR
   API["GET /monitor/snapshot"]
   Stream["GET /monitor/stream\ntext/event-stream"]
   CLI["mizan monitor snapshot"]
+  CLIStream["mizan monitor stream\nJSON lines"]
   UI["WebUI Monitor panel"]
 
   Store --> Monitor
@@ -337,6 +339,7 @@ flowchart LR
   Monitor --> API
   Monitor --> Stream
   Monitor --> CLI
+  Monitor --> CLIStream
   API --> UI
 ```
 
@@ -344,7 +347,7 @@ The monitoring layer exposes a stable snapshot contract for registered targets. 
 
 Nginx targets can provide a `monitor_endpoint` that returns OSS `stub_status` text. Mizan parses active connections, accepted/handled/request counters, and reading/writing/waiting gauges. Parsed Nginx snapshots are `healthy` unless accepted connections exceed handled connections, which is surfaced as `warning`.
 
-Targets without a monitor endpoint return `unknown`, which keeps the API, CLI, and WebUI behavior predictable. The same snapshot contract is also exposed as an SSE stream at `/api/v1/projects/{id}/monitor/stream`; it emits `snapshot` events immediately and then on an interval, with test-friendly `limit` and `interval` query controls.
+Targets without a monitor endpoint return `unknown`, which keeps the API, CLI, and WebUI behavior predictable. The same snapshot contract is also exposed as an SSE stream at `/api/v1/projects/{id}/monitor/stream`; it emits `snapshot` events immediately and then on an interval, with test-friendly `limit` and `interval` query controls. The CLI mirrors this behavior with `mizan monitor stream`, emitting one JSON snapshot per line for terminal or script consumers.
 
 ## Topology Editing
 
@@ -550,6 +553,7 @@ mindmap
     Monitoring
       snapshot API
       CLI snapshot
+      CLI stream
       WebUI panel
       SSE stream endpoint
       HAProxy show stat CSV

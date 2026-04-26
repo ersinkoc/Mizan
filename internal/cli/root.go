@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/mizanproxy/mizan/internal/deploy"
 	"github.com/mizanproxy/mizan/internal/ir"
@@ -512,7 +513,7 @@ func deployCmd(ctx context.Context, args []string, stdout, stderr io.Writer) err
 
 func monitorCmd(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		_, _ = fmt.Fprintln(stderr, "usage: mizan monitor snapshot")
+		_, _ = fmt.Fprintln(stderr, "usage: mizan monitor snapshot|stream")
 		return errors.New("missing monitor command")
 	}
 	switch args[0] {
@@ -532,8 +533,56 @@ func monitorCmd(ctx context.Context, args []string, stdout, stderr io.Writer) er
 			return err
 		}
 		return json.NewEncoder(stdout).Encode(snapshot)
+	case "stream":
+		fs := flag.NewFlagSet("monitor stream", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		home := fs.String("home", store.DefaultRoot(), "Mizan data directory")
+		projectID := fs.String("project", "", "project id")
+		limit := fs.Int("limit", 0, "number of snapshots to emit before exiting")
+		interval := fs.Duration("interval", 5*time.Second, "delay between snapshots")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if *projectID == "" {
+			return errors.New("--project is required")
+		}
+		if *limit < 0 {
+			return errors.New("--limit must be non-negative")
+		}
+		if *interval <= 0 {
+			return errors.New("--interval must be positive")
+		}
+		return streamSnapshots(ctx, store.New(*home), *projectID, *limit, *interval, stdout)
 	default:
 		return fmt.Errorf("unknown monitor command %q", args[0])
+	}
+}
+
+func streamSnapshots(ctx context.Context, st *store.Store, projectID string, limit int, interval time.Duration, stdout io.Writer) error {
+	encoder := json.NewEncoder(stdout)
+	sent := 0
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		snapshot, err := monitor.SnapshotTargets(ctx, st, projectID, nil)
+		if err != nil {
+			return err
+		}
+		if err := encoder.Encode(snapshot); err != nil {
+			return err
+		}
+		sent++
+		if limit > 0 && sent >= limit {
+			return nil
+		}
+		timer := time.NewTimer(interval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
 	}
 }
 
@@ -576,5 +625,6 @@ Usage:
   mizan validate --project <id> --target nginx
   mizan deploy --project <id> --target-id <target-id>
   mizan monitor snapshot --project <id>
+  mizan monitor stream --project <id> [--limit 10]
   mizan version`)
 }

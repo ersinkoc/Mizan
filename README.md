@@ -59,6 +59,7 @@ go run ./cmd/mizan generate --project <id> --target haproxy
 go run ./cmd/mizan validate --project <id> --target nginx
 go run ./cmd/mizan deploy --project <id> --target-id <target-id>
 go run ./cmd/mizan monitor snapshot --project <id>
+go run ./cmd/mizan monitor stream --project <id> --limit 10 --interval 5s
 ```
 
 ## Build
