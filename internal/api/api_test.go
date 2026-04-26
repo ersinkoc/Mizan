@@ -114,6 +114,13 @@ func TestProjectLifecycleEndpoints(t *testing.T) {
 	if res.Code != http.StatusOK || !bytes.Contains(res.Body.Bytes(), []byte("prod-a")) {
 		t.Fatalf("targets status=%d body=%s", res.Code, res.Body.String())
 	}
+	res = doJSON(mux, http.MethodGet, "/api/v1/projects/"+id+"/export", nil)
+	if res.Code != http.StatusOK || !bytes.Contains(res.Body.Bytes(), []byte(`"format_version":1`)) || !bytes.Contains(res.Body.Bytes(), []byte("prod-a")) {
+		t.Fatalf("export status=%d body=%s", res.Code, res.Body.String())
+	}
+	if got := res.Header().Get("Content-Disposition"); !strings.Contains(got, id+"-mizan-export.json") {
+		t.Fatalf("unexpected export disposition %q", got)
+	}
 	res = doJSON(mux, http.MethodGet, "/api/v1/projects/"+id+"/monitor/snapshot", nil)
 	if res.Code != http.StatusOK || !bytes.Contains(res.Body.Bytes(), []byte(`"unknown":1`)) {
 		t.Fatalf("monitor snapshot status=%d body=%s", res.Code, res.Body.String())
@@ -530,6 +537,35 @@ func TestAuditFilterEndpoint(t *testing.T) {
 	}
 }
 
+func TestProjectExportErrorBranches(t *testing.T) {
+	st := store.New(t.TempDir())
+	mux := http.NewServeMux()
+	Register(mux, st)
+	meta, _, _, err := st.CreateProject(t.Context(), "edge", "", []ir.Engine{ir.EngineHAProxy})
+	if err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(st.Root(), "projects", meta.ID, "config.json")
+	if err := os.Remove(configPath); err != nil {
+		t.Fatal(err)
+	}
+	res := doJSON(mux, http.MethodGet, "/api/v1/projects/"+meta.ID+"/export", nil)
+	if res.Code != http.StatusNotFound {
+		t.Fatalf("missing config export status=%d body=%s", res.Code, res.Body.String())
+	}
+	if _, err := st.SaveIR(t.Context(), meta.ID, ir.EmptyModel(meta.ID, "edge", "", []ir.Engine{ir.EngineHAProxy}), ""); err != nil {
+		t.Fatal(err)
+	}
+	targetsPath := filepath.Join(st.Root(), "projects", meta.ID, "targets.json")
+	if err := os.WriteFile(targetsPath, []byte("{bad json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	res = doJSON(mux, http.MethodGet, "/api/v1/projects/"+meta.ID+"/export", nil)
+	if res.Code != http.StatusInternalServerError {
+		t.Fatalf("bad targets export status=%d body=%s", res.Code, res.Body.String())
+	}
+}
+
 func TestAPIErrorBranches(t *testing.T) {
 	st := store.New(t.TempDir())
 	mux := http.NewServeMux()
@@ -546,6 +582,7 @@ func TestAPIErrorBranches(t *testing.T) {
 		{http.MethodPost, "/api/v1/projects/import", map[string]any{"filename": "x.cfg"}, http.StatusBadRequest},
 		{http.MethodPost, "/api/v1/projects/import", map[string]any{"filename": "x.txt", "config": "not config"}, http.StatusBadRequest},
 		{http.MethodGet, "/api/v1/projects/missing", nil, http.StatusNotFound},
+		{http.MethodGet, "/api/v1/projects/missing/export", nil, http.StatusNotFound},
 		{http.MethodGet, "/api/v1/projects/missing/ir", nil, http.StatusNotFound},
 		{http.MethodGet, "/api/v1/projects/missing/ir/snapshots", nil, http.StatusOK},
 		{http.MethodGet, "/api/v1/projects/missing/ir/snapshots/nope", nil, http.StatusNotFound},

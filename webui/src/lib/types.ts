@@ -9,6 +9,15 @@ export interface ProjectMeta {
   updated_at: string;
 }
 
+export interface ProjectExport {
+  format_version: number;
+  exported_at: string;
+  project: ProjectMeta;
+  ir: Model;
+  version: string;
+  targets: TargetsResponse;
+}
+
 export interface Model {
   version: number;
   id: string;

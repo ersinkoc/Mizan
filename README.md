@@ -9,6 +9,7 @@ The current codebase is a working product foundation with backend statement cove
 - Single-binary Go CLI and HTTP server: `mizan serve`
 - Embedded React WebUI with project creation, import, IR editing, generation, validation, snapshots, diff, audit, topology, and deployment-target panels
 - Project CRUD and filesystem persistence under `~/.mizan/projects`
+- Project export endpoint and WebUI download for portable JSON backups
 - Universal IR with structural linting, deterministic hashes, mutations, canonical JSON, and structural diffs
 - HAProxy and Nginx import for the supported v0 directive subset
 - HAProxy and Nginx generation from the shared IR

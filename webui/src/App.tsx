@@ -4,6 +4,7 @@ import {
   Boxes,
   CheckCircle2,
   Code2,
+  Download,
   History,
   LineChart,
   Moon,
@@ -571,6 +572,29 @@ export function App() {
     }
   }
 
+  async function exportActiveProject() {
+    if (!active) return;
+    setBusy(true);
+    setError('');
+    try {
+      const payload = await api.exportProject(active.id);
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${active.name.replace(/[^a-z0-9_-]+/gi, '-').replace(/^-+|-+$/g, '') || active.id}-mizan-export.json`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      await reloadAudit(active.id);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <main className="app-shell">
       <aside className="sidebar">
@@ -621,6 +645,7 @@ export function App() {
           </div>
           <div className="toolbar">
             <button onClick={reloadProjects} disabled={busy} title="Refresh projects"><RefreshCw size={16} /></button>
+            <button onClick={exportActiveProject} disabled={!active || busy} title="Export project"><Download size={16} /></button>
             <button onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} title="Toggle theme">
               {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
             </button>

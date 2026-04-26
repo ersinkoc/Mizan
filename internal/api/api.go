@@ -45,6 +45,7 @@ func Register(mux *http.ServeMux, st *store.Store) {
 	mux.HandleFunc("POST /api/v1/projects", h.createProject)
 	mux.HandleFunc("POST /api/v1/projects/import", h.importProject)
 	mux.HandleFunc("GET /api/v1/projects/{id}", h.getProject)
+	mux.HandleFunc("GET /api/v1/projects/{id}/export", h.exportProject)
 	mux.HandleFunc("DELETE /api/v1/projects/{id}", h.deleteProject)
 	mux.HandleFunc("GET /api/v1/projects/{id}/ir", h.getIR)
 	mux.HandleFunc("PATCH /api/v1/projects/{id}/ir", h.patchIR)
@@ -119,6 +120,15 @@ type importProjectRequest struct {
 	Config      string `json:"config"`
 }
 
+type projectExportResponse struct {
+	FormatVersion int               `json:"format_version"`
+	ExportedAt    time.Time         `json:"exported_at"`
+	Project       store.ProjectMeta `json:"project"`
+	IR            *ir.Model         `json:"ir"`
+	Version       string            `json:"version"`
+	Targets       store.TargetsFile `json:"targets"`
+}
+
 func (h *Handler) importProject(w http.ResponseWriter, r *http.Request) {
 	var req importProjectRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -154,6 +164,35 @@ func (h *Handler) getProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, meta)
+}
+
+func (h *Handler) exportProject(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	meta, err := h.store.GetProject(r.Context(), id)
+	if err != nil {
+		writeProblem(w, http.StatusNotFound, err)
+		return
+	}
+	model, version, err := h.store.GetIR(r.Context(), id)
+	if err != nil {
+		writeProblem(w, http.StatusNotFound, err)
+		return
+	}
+	targets, err := h.store.ListTargets(r.Context(), id)
+	if err != nil {
+		writeProblem(w, http.StatusInternalServerError, err)
+		return
+	}
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", meta.ID+"-mizan-export.json"))
+	h.audit(r, id, "project.export", version, "", "success", "", map[string]any{"targets": len(targets.Targets), "clusters": len(targets.Clusters)})
+	writeJSON(w, http.StatusOK, projectExportResponse{
+		FormatVersion: 1,
+		ExportedAt:    time.Now().UTC(),
+		Project:       meta,
+		IR:            model,
+		Version:       version,
+		Targets:       targets,
+	})
 }
 
 func (h *Handler) deleteProject(w http.ResponseWriter, r *http.Request) {

@@ -8,6 +8,7 @@ import type {
   IRResponse,
   Model,
   MonitorSnapshot,
+  ProjectExport,
   ProbeResult,
   ProjectMeta,
   SnapshotTag,
@@ -47,6 +48,7 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(body)
     }),
+  exportProject: (projectID: string) => request<ProjectExport>(`/api/v1/projects/${projectID}/export`),
   getIR: (projectID: string) => request<IRResponse>(`/api/v1/projects/${projectID}/ir`),
   saveIR: (projectID: string, ir: Model, version: string) =>
     request<IRResponse>(`/api/v1/projects/${projectID}/ir`, {
