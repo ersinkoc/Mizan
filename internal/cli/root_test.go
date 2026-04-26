@@ -145,6 +145,13 @@ func TestProjectGenerateValidateAndSnapshotCommands(t *testing.T) {
 	if !bytes.Contains(stdout.Bytes(), []byte(`"cluster_id":"`+cluster.ID+`"`)) {
 		t.Fatalf("deploy cluster output unexpected: %s", stdout.String())
 	}
+	stdout.Reset()
+	if err := Run(context.Background(), []string{"monitor", "snapshot", "--home", home, "--project", created.Project.ID}, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(stdout.Bytes(), []byte(`"unknown":1`)) || !bytes.Contains(stdout.Bytes(), []byte("edge-01b")) {
+		t.Fatalf("monitor output unexpected: %s", stdout.String())
+	}
 	st := store.New(home)
 	events, err := st.ListAudit(context.Background(), created.Project.ID, 10)
 	if err != nil {
@@ -308,6 +315,11 @@ func TestCLIErrorBranches(t *testing.T) {
 	expectErr("deploy", "--home", home)
 	expectErr("deploy", "--home", home, "--project", "missing")
 	expectErr("deploy", "--home", home, "--project", "missing", "--target-id", "t_1")
+	expectErr("monitor")
+	expectErr("monitor", "snapshot", "--bad")
+	expectErr("monitor", "snapshot", "--home", home)
+	expectErr("monitor", "snapshot", "--home", home, "--project", "missing")
+	expectErr("monitor", "unknown")
 
 	stdout.Reset()
 	if err := Run(context.Background(), []string{"project", "new", "--home", home, "positional"}, &stdout, &stderr); err != nil {

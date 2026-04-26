@@ -56,6 +56,7 @@ func TestProjectLifecycleEndpoints(t *testing.T) {
 		{http.MethodGet, "/api/v1/projects/" + id + "/ir/snapshots", http.StatusOK},
 		{http.MethodGet, "/api/v1/projects/" + id + "/ir/tags", http.StatusOK},
 		{http.MethodGet, "/api/v1/projects/" + id + "/audit", http.StatusOK},
+		{http.MethodGet, "/api/v1/projects/" + id + "/monitor/snapshot", http.StatusOK},
 	} {
 		res = doJSON(mux, tc.method, tc.path, nil)
 		if res.Code != tc.status {
@@ -107,6 +108,10 @@ func TestProjectLifecycleEndpoints(t *testing.T) {
 	res = doJSON(mux, http.MethodGet, "/api/v1/projects/"+id+"/targets", nil)
 	if res.Code != http.StatusOK || !bytes.Contains(res.Body.Bytes(), []byte("prod-a")) {
 		t.Fatalf("targets status=%d body=%s", res.Code, res.Body.String())
+	}
+	res = doJSON(mux, http.MethodGet, "/api/v1/projects/"+id+"/monitor/snapshot", nil)
+	if res.Code != http.StatusOK || !bytes.Contains(res.Body.Bytes(), []byte(`"unknown":1`)) {
+		t.Fatalf("monitor snapshot status=%d body=%s", res.Code, res.Body.String())
 	}
 	res = doJSON(mux, http.MethodPost, "/api/v1/projects/"+id+"/deploy", map[string]any{"target_id": target.ID, "dry_run": true})
 	if res.Code != http.StatusOK || !bytes.Contains(res.Body.Bytes(), []byte(`"dry_run":true`)) {
@@ -225,6 +230,7 @@ func TestAPIErrorBranches(t *testing.T) {
 		{http.MethodGet, "/api/v1/projects/missing/ir", nil, http.StatusNotFound},
 		{http.MethodGet, "/api/v1/projects/missing/ir/snapshots", nil, http.StatusOK},
 		{http.MethodGet, "/api/v1/projects/missing/ir/snapshots/nope", nil, http.StatusNotFound},
+		{http.MethodGet, "/api/v1/projects/missing/monitor/snapshot", nil, http.StatusNotFound},
 		{http.MethodPost, "/api/v1/projects/missing/generate", map[string]string{"target": "bad"}, http.StatusNotFound},
 		{http.MethodPost, "/api/v1/projects/missing/validate", map[string]string{"target": "bad"}, http.StatusNotFound},
 	} {

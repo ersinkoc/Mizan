@@ -6,6 +6,7 @@ import type {
   GenerateResult,
   IRResponse,
   Model,
+  MonitorSnapshot,
   ProjectMeta,
   SnapshotTag,
   Cluster,
@@ -99,5 +100,6 @@ export const api = {
     request<DeployResult>(`/api/v1/projects/${projectID}/deploy`, {
       method: 'POST',
       body: JSON.stringify(body)
-    })
+    }),
+  monitorSnapshot: (projectID: string) => request<MonitorSnapshot>(`/api/v1/projects/${projectID}/monitor/snapshot`)
 };

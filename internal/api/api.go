@@ -9,6 +9,7 @@ import (
 	"github.com/mizanproxy/mizan/internal/deploy"
 	"github.com/mizanproxy/mizan/internal/ir"
 	"github.com/mizanproxy/mizan/internal/ir/parser"
+	"github.com/mizanproxy/mizan/internal/monitor"
 	"github.com/mizanproxy/mizan/internal/store"
 	"github.com/mizanproxy/mizan/internal/validate"
 	"github.com/mizanproxy/mizan/internal/version"
@@ -48,6 +49,7 @@ func Register(mux *http.ServeMux, st *store.Store) {
 	mux.HandleFunc("POST /api/v1/projects/{id}/generate", h.generate)
 	mux.HandleFunc("POST /api/v1/projects/{id}/validate", h.validate)
 	mux.HandleFunc("POST /api/v1/projects/{id}/deploy", h.deploy)
+	mux.HandleFunc("GET /api/v1/projects/{id}/monitor/snapshot", h.monitorSnapshot)
 	mux.HandleFunc("GET /api/v1/projects/{id}/audit", h.listAudit)
 	mux.HandleFunc("GET /api/v1/projects/{id}/targets", h.listTargets)
 	mux.HandleFunc("POST /api/v1/projects/{id}/targets", h.upsertTarget)
@@ -398,6 +400,15 @@ func (h *Handler) deploy(w http.ResponseWriter, r *http.Request) {
 		"steps":      len(result.Steps),
 	})
 	writeJSON(w, http.StatusOK, result)
+}
+
+func (h *Handler) monitorSnapshot(w http.ResponseWriter, r *http.Request) {
+	snapshot, err := monitor.SnapshotTargets(r.Context(), h.store, r.PathValue("id"), nil)
+	if err != nil {
+		writeProblem(w, http.StatusNotFound, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, snapshot)
 }
 
 func (h *Handler) listAudit(w http.ResponseWriter, r *http.Request) {

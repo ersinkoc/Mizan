@@ -429,6 +429,7 @@ textarea {
 
 .snapshots,
 .targets-panel,
+.monitor-panel,
 .audit-panel {
   margin-top: 14px;
 }
@@ -852,6 +853,70 @@ textarea {
   font-family: "JetBrains Mono", "Cascadia Code", Consolas, monospace;
 }
 
+.monitor-empty,
+.monitor-body {
+  padding: 14px;
+}
+
+.monitor-empty {
+  color: var(--muted);
+}
+
+.monitor-body {
+  display: grid;
+  gap: 12px;
+}
+
+.monitor-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(130px, 1fr));
+  gap: 10px;
+}
+
+.monitor-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 8px;
+}
+
+.monitor-target {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-left: 5px solid var(--warn);
+  border-radius: 8px;
+  background: var(--input);
+  padding: 10px 12px;
+}
+
+.monitor-target.healthy {
+  border-left-color: var(--accent);
+}
+
+.monitor-target.failed {
+  border-left-color: var(--danger);
+}
+
+.monitor-target div {
+  display: grid;
+  gap: 3px;
+}
+
+.monitor-target span,
+.monitor-target small,
+.monitor-updated {
+  color: var(--muted);
+}
+
+.monitor-target strong,
+.monitor-target span,
+.monitor-target small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 @media (max-width: 980px) {
   .app-shell {
     grid-template-columns: 1fr;
@@ -866,6 +931,7 @@ textarea {
   .metrics,
   .split,
   .targets-grid,
+  .monitor-summary,
   .snapshot-grid {
     grid-template-columns: 1fr;
   }

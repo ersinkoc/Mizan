@@ -17,6 +17,7 @@ The current codebase is a working product foundation with backend statement cove
 - Append-only project audit log in `audit.jsonl`
 - Deployment targets and clusters persisted in `targets.json`
 - Deployment dry-run planning for single targets or clusters via generated rollout steps
+- Monitor snapshot foundation for registered targets through API, CLI, and WebUI
 - Topology canvas with drag/connect gestures that update the IR
 
 ## Run
@@ -54,6 +55,7 @@ go run ./cmd/mizan cluster add --project <id> --name prod --target-ids <target-i
 go run ./cmd/mizan generate --project <id> --target haproxy
 go run ./cmd/mizan validate --project <id> --target nginx
 go run ./cmd/mizan deploy --project <id> --target-id <target-id>
+go run ./cmd/mizan monitor snapshot --project <id>
 ```
 
 ## Build

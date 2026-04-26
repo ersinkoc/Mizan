@@ -5,6 +5,7 @@ import {
   CheckCircle2,
   Code2,
   History,
+  LineChart,
   Moon,
   Plus,
   RefreshCw,
@@ -30,6 +31,7 @@ import type {
   GenerateResult,
   IRResponse,
   Model,
+  MonitorSnapshot,
   NativeResult,
   ProjectMeta,
   TargetsResponse,
@@ -116,6 +118,7 @@ export function App() {
   const [audit, setAudit] = useState<AuditEvent[]>([]);
   const [targetsFile, setTargetsFile] = useState<TargetsResponse>({ targets: [], clusters: [] });
   const [deployResult, setDeployResult] = useState<DeployResult | null>(null);
+  const [monitorSnapshot, setMonitorSnapshot] = useState<MonitorSnapshot | null>(null);
   const [target, setTarget] = useState<Engine>('haproxy');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -137,6 +140,7 @@ export function App() {
     setDiffChanges([]);
     setTargetsFile({ targets: [], clusters: [] });
     setDeployResult(null);
+    setMonitorSnapshot(null);
     setError('');
     api
       .getIR(active.id)
@@ -146,6 +150,7 @@ export function App() {
         void reloadSnapshots(active.id);
         void reloadAudit(active.id);
         void reloadTargets(active.id);
+        void reloadMonitor(active.id);
       })
       .catch((err: Error) => setError(err.message));
   }, [active]);
@@ -191,6 +196,7 @@ export function App() {
       await reloadSnapshots(created.project.id);
       await reloadAudit(created.project.id);
       await reloadTargets(created.project.id);
+      await reloadMonitor(created.project.id);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -215,6 +221,7 @@ export function App() {
       await reloadSnapshots(imported.project.id);
       await reloadAudit(imported.project.id);
       await reloadTargets(imported.project.id);
+      await reloadMonitor(imported.project.id);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -258,6 +265,11 @@ export function App() {
     setTargetsFile(await api.listTargets(projectID));
   }
 
+  async function reloadMonitor(projectID = active?.id ?? '') {
+    if (!projectID) return;
+    setMonitorSnapshot(await api.monitorSnapshot(projectID));
+  }
+
   async function upsertTarget(formData: FormData) {
     if (!active) return;
     setBusy(true);
@@ -275,6 +287,7 @@ export function App() {
         post_reload_probe: String(formData.get('post_reload_probe') || '')
       });
       await reloadTargets(active.id);
+      await reloadMonitor(active.id);
       await reloadAudit(active.id);
     } catch (err) {
       setError((err as Error).message);
@@ -290,6 +303,7 @@ export function App() {
     try {
       await api.deleteTarget(active.id, targetID);
       await reloadTargets(active.id);
+      await reloadMonitor(active.id);
       await reloadAudit(active.id);
     } catch (err) {
       setError((err as Error).message);
@@ -658,6 +672,16 @@ export function App() {
           <DeployPlan result={deployResult} />
         </section>
 
+        <section className="panel monitor-panel">
+          <div className="panel-head">
+            <h2><LineChart size={16} /> Monitor</h2>
+            <button disabled={!active || busy} onClick={() => reloadMonitor()}>
+              <RefreshCw size={16} /> Refresh
+            </button>
+          </div>
+          <MonitorPanel snapshot={monitorSnapshot} />
+        </section>
+
         <section className="panel snapshots">
           <div className="panel-head">
             <h2><History size={16} /> Snapshots</h2>
@@ -767,6 +791,34 @@ function DeployPlan({ result }: { result: DeployResult | null }) {
           </article>
         ))}
       </div>
+    </div>
+  );
+}
+
+function MonitorPanel({ snapshot }: { snapshot: MonitorSnapshot | null }) {
+  if (!snapshot) {
+    return <div className="monitor-empty">No monitor snapshot loaded.</div>;
+  }
+  return (
+    <div className="monitor-body">
+      <div className="monitor-summary">
+        <Metric icon={<Server />} label="Targets" value={snapshot.summary.total_targets} />
+        <Metric icon={<CheckCircle2 />} label="Healthy" value={snapshot.summary.healthy} />
+        <Metric icon={<TriangleAlert />} label="Unknown" value={snapshot.summary.unknown} />
+        <Metric icon={<Activity />} label="Failed" value={snapshot.summary.failed} />
+      </div>
+      <div className="monitor-list">
+        {snapshot.targets.length ? snapshot.targets.map((target) => (
+          <article key={target.target_id} className={`monitor-target ${target.status}`}>
+            <div>
+              <strong>{target.name}</strong>
+              <span>{target.engine} / {target.host}</span>
+            </div>
+            <small>{target.message}</small>
+          </article>
+        )) : <p className="muted">No deployment targets to monitor yet.</p>}
+      </div>
+      <small className="monitor-updated">Updated {new Date(snapshot.generated_at).toLocaleString()}</small>
     </div>
   );
 }

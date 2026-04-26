@@ -15,8 +15,9 @@ flowchart LR
   Audit["Audit\nAppend-only audit.jsonl\nWebUI panel"]:::done
   Targets["Target Registry\nTargets + clusters\nWebUI panel"]:::done
   DeployPlan["Deploy Plan\nDry-run rollout steps\nAudit event"]:::done
+  MonitorBase["Monitor Snapshot\nTarget health contract\nAPI + CLI + WebUI"]:::done
   Deploy["SSH Deploy\nNot implemented yet"]:::todo
-  Monitor["Live Monitoring\nNot implemented yet"]:::todo
+  Monitor["Live Collectors\nNot implemented yet"]:::todo
 
   Foundation --> IR --> Import --> Generate --> Validate
   IR --> Topology
@@ -25,7 +26,8 @@ flowchart LR
   Targets --> DeployPlan
   DeployPlan --> Deploy
   Validate --> Deploy
-  Deploy --> Monitor
+  Targets --> MonitorBase
+  MonitorBase --> Monitor
 
   classDef done fill:#dff7ea,stroke:#2b8a57,color:#153b27;
   classDef todo fill:#fff3cd,stroke:#a36b00,color:#4a3100;
@@ -287,6 +289,7 @@ The same flow is exposed from the CLI:
 ```sh
 mizan deploy --project <id> --target-id <target-id>
 mizan deploy --project <id> --cluster-id <cluster-id>
+mizan monitor snapshot --project <id>
 ```
 
 Targets and clusters can also be managed from the CLI:
@@ -299,6 +302,24 @@ mizan cluster list --project <id>
 ```
 
 CLI deploy defaults to dry-run planning. Passing `--execute` switches to the real command runner.
+
+## Monitor Snapshot
+
+```mermaid
+flowchart LR
+  Store["targets.json"]
+  Monitor["internal/monitor\nSnapshotTargets"]
+  API["GET /monitor/snapshot"]
+  CLI["mizan monitor snapshot"]
+  UI["WebUI Monitor panel"]
+
+  Store --> Monitor
+  Monitor --> API
+  Monitor --> CLI
+  API --> UI
+```
+
+The current monitoring layer exposes a stable snapshot contract for registered targets. Until live HAProxy Runtime API and Nginx collectors are wired in, targets report `unknown` with an explicit "collector not configured" message. This gives the API, CLI, and WebUI a working surface that future collectors can populate without reshaping consumers.
 
 ## Topology Editing
 
@@ -501,6 +522,11 @@ mindmap
       target selection
       cluster batches
       audit event
+    Monitoring
+      snapshot API
+      CLI snapshot
+      WebUI panel
+      unknown collector state
     Snapshot Diff
       structural tree
       added removed modified
@@ -521,6 +547,7 @@ mindmap
       targets
       clusters
       deploy preview
+      monitor
       audit
     CLI
       serve
@@ -531,6 +558,7 @@ mindmap
       generate
       validate
       deploy
+      monitor
 ```
 
 ## Not Implemented Yet

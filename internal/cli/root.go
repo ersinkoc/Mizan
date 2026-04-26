@@ -17,6 +17,7 @@ import (
 	"github.com/mizanproxy/mizan/internal/deploy"
 	"github.com/mizanproxy/mizan/internal/ir"
 	"github.com/mizanproxy/mizan/internal/ir/parser"
+	"github.com/mizanproxy/mizan/internal/monitor"
 	"github.com/mizanproxy/mizan/internal/server"
 	"github.com/mizanproxy/mizan/internal/store"
 	"github.com/mizanproxy/mizan/internal/validate"
@@ -60,6 +61,8 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return validateCmd(ctx, args[1:], stdout, stderr)
 	case "deploy":
 		return deployCmd(ctx, args[1:], stdout, stderr)
+	case "monitor":
+		return monitorCmd(ctx, args[1:], stdout, stderr)
 	default:
 		usage(stderr)
 		return fmt.Errorf("unknown command %q", args[0])
@@ -505,6 +508,33 @@ func deployCmd(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	return json.NewEncoder(stdout).Encode(result)
 }
 
+func monitorCmd(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	if len(args) == 0 {
+		_, _ = fmt.Fprintln(stderr, "usage: mizan monitor snapshot")
+		return errors.New("missing monitor command")
+	}
+	switch args[0] {
+	case "snapshot":
+		fs := flag.NewFlagSet("monitor snapshot", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		home := fs.String("home", store.DefaultRoot(), "Mizan data directory")
+		projectID := fs.String("project", "", "project id")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if *projectID == "" {
+			return errors.New("--project is required")
+		}
+		snapshot, err := monitor.SnapshotTargets(ctx, store.New(*home), *projectID, nil)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(stdout).Encode(snapshot)
+	default:
+		return fmt.Errorf("unknown monitor command %q", args[0])
+	}
+}
+
 func parseEngines(v string) []ir.Engine {
 	var engines []ir.Engine
 	for _, part := range splitCSV(v) {
@@ -543,5 +573,6 @@ Usage:
   mizan generate --project <id> --target haproxy [--out haproxy.cfg]
   mizan validate --project <id> --target nginx
   mizan deploy --project <id> --target-id <target-id>
+  mizan monitor snapshot --project <id>
   mizan version`)
 }

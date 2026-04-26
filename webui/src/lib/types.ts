@@ -208,3 +208,27 @@ export interface DeployResult {
   finished_at: string;
   steps: DeployStep[];
 }
+
+export interface MonitorSummary {
+  total_targets: number;
+  healthy: number;
+  warning: number;
+  unknown: number;
+  failed: number;
+}
+
+export interface MonitorTarget {
+  target_id: string;
+  name: string;
+  host: string;
+  engine: Engine;
+  status: 'healthy' | 'warning' | 'unknown' | 'failed';
+  message: string;
+}
+
+export interface MonitorSnapshot {
+  project_id: string;
+  generated_at: string;
+  summary: MonitorSummary;
+  targets: MonitorTarget[];
+}
