@@ -48,9 +48,11 @@ jobs:
           else
             version="${{ github.event.inputs.version || '0.1.5-dev' }}"
           fi
-          echo "MIZAN_VERSION=${version}" >> "$GITHUB_ENV"
-          echo "MIZAN_COMMIT=${GITHUB_SHA}" >> "$GITHUB_ENV"
-          echo "MIZAN_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
+          {
+            echo "MIZAN_VERSION=${version}"
+            echo "MIZAN_COMMIT=${GITHUB_SHA}"
+            echo "MIZAN_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } >> "$GITHUB_ENV"
       - run: |
           GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} CGO_ENABLED=0 go build -trimpath \
             -ldflags="-s -w -X github.com/mizanproxy/mizan/internal/version.Version=${MIZAN_VERSION} -X github.com/mizanproxy/mizan/internal/version.Commit=${MIZAN_COMMIT} -X github.com/mizanproxy/mizan/internal/version.Date=${MIZAN_DATE}" \
