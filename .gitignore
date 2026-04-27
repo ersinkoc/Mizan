@@ -11,3 +11,5 @@ coverage/
 *.log
 .env
 *.out
+coverage
+coverage.*
