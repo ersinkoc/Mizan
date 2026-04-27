@@ -355,7 +355,7 @@ mizan cluster add --project <id> --name prod --target-ids <target-id>
 mizan cluster list --project <id>
 ```
 
-CLI deploy defaults to dry-run planning. Passing `--execute` switches to the real command runner. If `--vault-passphrase` or `MIZAN_VAULT_PASSPHRASE` is available, deploy looks up a secret with the target id and applies its username and private key to the local `ssh` invocation. Deployment steps and audit metadata report only credential source names (`vault` or `local_ssh`), never secret values. Password and passphrase automation still depends on the local SSH environment, such as an agent or existing SSH config.
+CLI deploy defaults to dry-run planning. Passing `--execute` switches to the real command runner. If `--vault-passphrase` or `MIZAN_VAULT_PASSPHRASE` is available, deploy looks up a secret with the target id and applies its username and private key to the local `ssh` invocation. Deployment steps and audit metadata report only credential source names (`vault` or `local_ssh`), never secret values. Password and passphrase automation still depends on the local SSH environment, such as an agent or existing SSH config. The default container `runtime` target intentionally omits `openssh-client`; use the `runtime-ssh` Docker target when the container must execute remote deployments itself.
 
 ## Monitor Snapshot
 
@@ -541,7 +541,8 @@ flowchart LR
   WebDist["webui/dist"]
   EmbedDist["internal/server/dist"]
   GoBuild["go build ./cmd/mizan"]
-  DockerBuild["docker build\nuses prepared embedded dist"]
+  DockerBuild["docker build\nruntime target"]
+  DockerSSH["docker build\nruntime-ssh target"]
   Binary["dist/mizan.exe"]
   Serve["mizan serve"]
   Browser["http://127.0.0.1:7890"]
@@ -550,7 +551,9 @@ flowchart LR
   WebDist --> EmbedDist
   EmbedDist --> GoBuild
   EmbedDist --> DockerBuild
+  EmbedDist --> DockerSSH
   GoBuild --> DockerBuild
+  GoBuild --> DockerSSH
   GoBuild --> Binary
   Binary --> Serve --> Browser
 ```

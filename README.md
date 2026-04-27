@@ -133,8 +133,14 @@ Container image:
 
 ```sh
 make ui
-docker build -t mizan:local .
+docker build --target runtime -t mizan:local .
 docker run --rm -p 127.0.0.1:7890:7890 -v mizan-data:/var/lib/mizan -e MIZAN_AUTH_TOKEN=change-me mizan:local
+```
+
+The default container target is the minimal UI/API runtime and intentionally excludes `openssh-client`. Build the SSH-capable runtime when the container itself must execute remote deployments:
+
+```sh
+docker build --target runtime-ssh -t mizan:ssh-local .
 ```
 
 Deployment examples live under `deploy/`:

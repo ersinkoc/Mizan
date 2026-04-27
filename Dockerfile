@@ -12,9 +12,9 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath \
     -ldflags="-s -w -X github.com/mizanproxy/mizan/internal/version.Version=${VERSION} -X github.com/mizanproxy/mizan/internal/version.Commit=${COMMIT} -X github.com/mizanproxy/mizan/internal/version.Date=${DATE}" \
     -o /out/mizan ./cmd/mizan
 
-FROM alpine:3.23
+FROM alpine:3.23 AS runtime-base
 
-RUN apk add --no-cache ca-certificates openssh-client \
+RUN apk add --no-cache ca-certificates \
     && addgroup -S mizan \
     && mkdir -p /var/lib/mizan \
     && adduser -S -D -h /var/lib/mizan -s /sbin/nologin -G mizan mizan \
@@ -32,3 +32,13 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 
 ENTRYPOINT ["mizan"]
 CMD ["serve", "--bind", "0.0.0.0:7890", "--home", "/var/lib/mizan"]
+
+FROM runtime-base AS runtime-ssh
+
+USER root
+RUN apk add --no-cache openssh-client
+USER mizan
+
+FROM runtime-base AS runtime
+
+USER mizan

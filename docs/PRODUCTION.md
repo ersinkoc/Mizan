@@ -53,12 +53,18 @@ Container example:
 
 ```sh
 make ui
-docker build -t mizan:local .
+docker build --target runtime -t mizan:local .
 docker run -d --name mizan \
   -p 127.0.0.1:7890:7890 \
   -v mizan-data:/var/lib/mizan \
   -e MIZAN_AUTH_TOKEN=replace-with-secret-manager-value \
   mizan:local
+```
+
+The default `runtime` image is meant for the WebUI/API control plane and does not include `openssh-client`. If operators need the container to run `mizan deploy --execute`, build and run the deploy-capable target instead:
+
+```sh
+docker build --target runtime-ssh -t mizan:ssh-local .
 ```
 
 ### Nginx TLS Reverse Proxy
