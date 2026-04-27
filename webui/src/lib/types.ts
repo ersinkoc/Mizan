@@ -174,6 +174,7 @@ export interface AuditFilters {
   dry_run?: boolean;
   incident?: boolean;
   rollback_failed?: boolean;
+  cleanup_failed?: boolean;
 }
 
 export interface DiffChange {

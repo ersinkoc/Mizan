@@ -778,6 +778,7 @@ func TestAuditFilterEndpoint(t *testing.T) {
 		{ProjectID: meta.ID, Actor: "bob", Action: "target.probe", Outcome: "failed", TargetEngine: ir.EngineNginx, Timestamp: base.Add(time.Hour), Metadata: map[string]any{"target_id": "t_nginx", "batch": 2, "dry_run": true}},
 		{ProjectID: meta.ID, Actor: "alice", Action: "approval.request", Outcome: "success", TargetEngine: ir.EngineNginx, Timestamp: base.Add(2 * time.Hour), Metadata: map[string]any{"cluster_id": "c_edge", "approval_request_id": "a_edge"}},
 		{ProjectID: meta.ID, Actor: "alice", Action: "deploy.run", Outcome: "success", TargetEngine: ir.EngineNginx, Timestamp: base.Add(3 * time.Hour), Metadata: map[string]any{"rollback": map[string]any{"failed": 1}}},
+		{ProjectID: meta.ID, Actor: "alice", Action: "deploy.run", Outcome: "success", TargetEngine: ir.EngineNginx, Timestamp: base.Add(4 * time.Hour), Metadata: map[string]any{"cleanup": map[string]any{"failed": 1}}},
 	} {
 		if err := st.AppendAudit(t.Context(), event); err != nil {
 			t.Fatal(err)
@@ -795,6 +796,10 @@ func TestAuditFilterEndpoint(t *testing.T) {
 	res = doJSON(mux, http.MethodGet, "/api/v1/projects/"+meta.ID+"/audit?rollback_failed=true", nil)
 	if res.Code != http.StatusOK || !bytes.Contains(res.Body.Bytes(), []byte("deploy.run")) || bytes.Contains(res.Body.Bytes(), []byte("target.probe")) {
 		t.Fatalf("rollback audit status=%d body=%s", res.Code, res.Body.String())
+	}
+	res = doJSON(mux, http.MethodGet, "/api/v1/projects/"+meta.ID+"/audit?cleanup_failed=true", nil)
+	if res.Code != http.StatusOK || !bytes.Contains(res.Body.Bytes(), []byte("deploy.run")) || bytes.Contains(res.Body.Bytes(), []byte("target.probe")) {
+		t.Fatalf("cleanup audit status=%d body=%s", res.Code, res.Body.String())
 	}
 	res = doJSON(mux, http.MethodGet, strings.Replace(path, "/audit?", "/audit.csv?", 1), nil)
 	if res.Code != http.StatusOK || res.Header().Get("Content-Type") != "text/csv; charset=utf-8" || !bytes.Contains(res.Body.Bytes(), []byte("event_id,timestamp,actor,action,outcome,target_engine")) || !bytes.Contains(res.Body.Bytes(), []byte("target.probe")) {
@@ -814,6 +819,7 @@ func TestAuditFilterEndpoint(t *testing.T) {
 		"/api/v1/projects/" + meta.ID + "/audit?dry_run=bad",
 		"/api/v1/projects/" + meta.ID + "/audit?incident=bad",
 		"/api/v1/projects/" + meta.ID + "/audit?rollback_failed=bad",
+		"/api/v1/projects/" + meta.ID + "/audit?cleanup_failed=bad",
 		"/api/v1/projects/" + meta.ID + "/audit.csv?target_engine=bad",
 	} {
 		if res := doJSON(mux, http.MethodGet, path, nil); res.Code != http.StatusBadRequest {

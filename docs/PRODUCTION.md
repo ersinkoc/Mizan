@@ -185,7 +185,7 @@ Recommended rollout loop:
 5. Run `mizan monitor snapshot --project <id>` after each batch before approving the next batch.
 6. Stop the rollout if monitor health regresses, audit entries look unexpected, or a rollback step appears in an executed run.
 
-For incident triage, audit queries can be narrowed to operational metadata such as `target_id`, `cluster_id`, `approval_request_id`, rollout `batch`, `dry_run`, `incident`, and `rollback_failed`. The same filters are available through the API, CSV export, and `mizan audit show`.
+For incident triage, audit queries can be narrowed to operational metadata such as `target_id`, `cluster_id`, `approval_request_id`, rollout `batch`, `dry_run`, `incident`, `rollback_failed`, and `cleanup_failed`. The same filters are available through the API, CSV export, and `mizan audit show`.
 
 For targets that can restore a known-good config, set a `rollback_command`. Mizan runs it after a failed install, reload, or post-reload probe and records the rollback as a deployment step. After a failed upload, remote validation, install, reload, or post-reload probe, Mizan also attempts remote temporary config cleanup so failed runs do not leave stale `/tmp/mizan-*.cfg` files behind.
 

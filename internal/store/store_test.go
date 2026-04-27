@@ -100,6 +100,7 @@ func TestAuditAppendAndList(t *testing.T) {
 		{"dry-run", AuditFilter{DryRun: &trueValue}, "target.probe"},
 		{"incident", AuditFilter{Incident: &trueValue, Limit: 1}, "deploy.run"},
 		{"rollback-failed", AuditFilter{RollbackFailed: &trueValue}, "deploy.run"},
+		{"cleanup-failed", AuditFilter{CleanupFailed: &trueValue}, "deploy.run"},
 		{"all", AuditFilter{Actor: "bob", Action: "target.probe", Outcome: "failed", TargetEngine: ir.EngineNginx, From: base.Add(30 * time.Minute), To: base.Add(90 * time.Minute)}, "target.probe"},
 	} {
 		events, err := st.ListAuditFiltered(ctx, meta.ID, tc.filter)

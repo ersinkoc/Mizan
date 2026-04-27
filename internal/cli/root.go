@@ -985,6 +985,7 @@ func auditCmd(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		dryRun := fs.String("dry-run", "", "metadata dry-run filter: true or false")
 		incident := fs.String("incident", "", "incident filter: true or false")
 		rollbackFailed := fs.String("rollback-failed", "", "rollback failure filter: true or false")
+		cleanupFailed := fs.String("cleanup-failed", "", "cleanup failure filter: true or false")
 		csvOut := fs.Bool("csv", false, "write CSV instead of JSON")
 		out := fs.String("out", "", "write output to file")
 		if err := fs.Parse(args[1:]); err != nil {
@@ -993,7 +994,7 @@ func auditCmd(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		if *projectID == "" {
 			return errors.New("--project is required")
 		}
-		filter, err := auditFilterFromFlags(*limit, *from, *to, *actor, *action, *actionPrefix, *outcome, *targetEngine, *targetID, *clusterID, *approvalRequestID, *batch, *dryRun, *incident, *rollbackFailed)
+		filter, err := auditFilterFromFlags(*limit, *from, *to, *actor, *action, *actionPrefix, *outcome, *targetEngine, *targetID, *clusterID, *approvalRequestID, *batch, *dryRun, *incident, *rollbackFailed, *cleanupFailed)
 		if err != nil {
 			return err
 		}
@@ -1534,7 +1535,7 @@ func pathInside(root, candidate string) (bool, error) {
 	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))), nil
 }
 
-func auditFilterFromFlags(limit int, from, to, actor, action, actionPrefix, outcome, targetEngine, targetID, clusterID, approvalRequestID string, batch int, dryRun, incident, rollbackFailed string) (store.AuditFilter, error) {
+func auditFilterFromFlags(limit int, from, to, actor, action, actionPrefix, outcome, targetEngine, targetID, clusterID, approvalRequestID string, batch int, dryRun, incident, rollbackFailed, cleanupFailed string) (store.AuditFilter, error) {
 	if limit < 1 {
 		return store.AuditFilter{}, errors.New("--limit must be greater than zero")
 	}
@@ -1593,6 +1594,13 @@ func auditFilterFromFlags(limit int, from, to, actor, action, actionPrefix, outc
 			return filter, fmt.Errorf("invalid --rollback-failed %q", rollbackFailed)
 		}
 		filter.RollbackFailed = &parsed
+	}
+	if cleanupFailed != "" {
+		parsed, err := strconv.ParseBool(cleanupFailed)
+		if err != nil {
+			return filter, fmt.Errorf("invalid --cleanup-failed %q", cleanupFailed)
+		}
+		filter.CleanupFailed = &parsed
 	}
 	return filter, nil
 }

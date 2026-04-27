@@ -1143,6 +1143,15 @@ export function App() {
               <option value="true">Rollback failed</option>
               <option value="false">Rollback clean</option>
             </select>
+            <select
+              aria-label="Audit cleanup failed"
+              value={auditFilters.cleanup_failed === undefined ? '' : String(auditFilters.cleanup_failed)}
+              onChange={(event) => setAuditFilters((filters) => ({ ...filters, cleanup_failed: event.target.value === '' ? undefined : event.target.value === 'true' }))}
+            >
+              <option value="">Any cleanup</option>
+              <option value="true">Cleanup failed</option>
+              <option value="false">Cleanup clean</option>
+            </select>
             <div className="audit-filter-actions">
               <button disabled={!active || busy}>
                 <RefreshCw size={15} /> Apply
@@ -1510,6 +1519,11 @@ function auditRollbackFailed(event: AuditEvent) {
   return rollback ? metaNumber(rollback, 'failed') > 0 : false;
 }
 
+function auditCleanupFailed(event: AuditEvent) {
+  const cleanup = metaRecord(event.metadata ?? {}, 'cleanup');
+  return cleanup ? metaNumber(cleanup, 'failed') > 0 : false;
+}
+
 function auditMatchesQuickView(event: AuditEvent, view: AuditQuickView) {
   switch (view) {
     case 'deploys':
@@ -1603,6 +1617,9 @@ function auditMatchesFilters(event: AuditEvent, filters: AuditFilters) {
     return false;
   }
   if (filters.rollback_failed !== undefined && auditRollbackFailed(event) !== filters.rollback_failed) {
+    return false;
+  }
+  if (filters.cleanup_failed !== undefined && auditCleanupFailed(event) !== filters.cleanup_failed) {
     return false;
   }
   return true;

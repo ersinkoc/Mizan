@@ -102,7 +102,7 @@ go run ./cmd/mizan approval approve --project <id> --actor alice <approval-reque
 go run ./cmd/mizan approval approve --project <id> --actor bob <approval-request-id>
 go run ./cmd/mizan deploy --project <id> --approval-request-id <approval-request-id> --execute --vault-passphrase "$MIZAN_VAULT_PASSPHRASE"
 go run ./cmd/mizan audit show --project <id> --action deploy.run --dry-run true --csv --out audit.csv
-go run ./cmd/mizan audit show --project <id> --incident true --rollback-failed true
+go run ./cmd/mizan audit show --project <id> --incident true --rollback-failed true --cleanup-failed true
 go run ./cmd/mizan secret set --id <target-id> --username root --private-key-file ~/.ssh/id_ed25519 --vault-passphrase "$MIZAN_VAULT_PASSPHRASE"
 go run ./cmd/mizan deploy --project <id> --cluster-id <cluster-id> --batch 1 --execute --confirm-snapshot <snapshot_hash> --approved-by alice,bob --vault-passphrase "$MIZAN_VAULT_PASSPHRASE"
 go run ./cmd/mizan secret list

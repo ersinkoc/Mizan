@@ -54,6 +54,7 @@ function auditFilterParams(filters: AuditFilters = { limit: 100 }) {
   if (typeof filters.dry_run === 'boolean') params.set('dry_run', String(filters.dry_run));
   if (typeof filters.incident === 'boolean') params.set('incident', String(filters.incident));
   if (typeof filters.rollback_failed === 'boolean') params.set('rollback_failed', String(filters.rollback_failed));
+  if (typeof filters.cleanup_failed === 'boolean') params.set('cleanup_failed', String(filters.cleanup_failed));
   return params;
 }
 

@@ -68,6 +68,7 @@ type AuditFilter struct {
 	DryRun            *bool
 	Incident          *bool
 	RollbackFailed    *bool
+	CleanupFailed     *bool
 }
 
 var (
@@ -435,6 +436,9 @@ func matchesAuditFilter(event AuditEvent, filter AuditFilter) bool {
 		return false
 	}
 	if filter.RollbackFailed != nil && auditRollbackFailed(event) != *filter.RollbackFailed {
+		return false
+	}
+	if filter.CleanupFailed != nil && auditCleanupFailed(event) != *filter.CleanupFailed {
 		return false
 	}
 	if filter.Incident != nil && auditIncident(event) != *filter.Incident {

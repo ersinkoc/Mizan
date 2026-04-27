@@ -967,6 +967,13 @@ func auditFilterFromRequest(r *http.Request) (store.AuditFilter, error) {
 		}
 		filter.RollbackFailed = &parsed
 	}
+	if raw := q.Get("cleanup_failed"); raw != "" {
+		parsed, err := strconv.ParseBool(raw)
+		if err != nil {
+			return filter, fmt.Errorf("invalid audit cleanup_failed %q", raw)
+		}
+		filter.CleanupFailed = &parsed
+	}
 	return filter, nil
 }
 

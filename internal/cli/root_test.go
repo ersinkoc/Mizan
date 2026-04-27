@@ -705,6 +705,7 @@ func TestCLIErrorBranches(t *testing.T) {
 	expectErr("audit", "show", "--home", home, "--project", "p_1", "--dry-run", "bad")
 	expectErr("audit", "show", "--home", home, "--project", "p_1", "--incident", "bad")
 	expectErr("audit", "show", "--home", home, "--project", "p_1", "--rollback-failed", "bad")
+	expectErr("audit", "show", "--home", home, "--project", "p_1", "--cleanup-failed", "bad")
 	expectErr("audit", "show", "--home", home, "--project", "p_1", "--out", filepath.Join(t.TempDir(), "missing", "audit.json"))
 	expectErr("audit", "unknown")
 	expectErr("secret")
@@ -817,12 +818,12 @@ func TestCLIErrorBranches(t *testing.T) {
 		Outcome:      "failed",
 		TargetEngine: "nginx",
 		ErrorMessage: "probe failed",
-		Metadata:     map[string]any{"target_id": "t_probe", "cluster_id": "c_probe", "approval_request_id": "a_probe", "batch": 2, "dry_run": true, "rollback": map[string]any{"failed": 1}},
+		Metadata:     map[string]any{"target_id": "t_probe", "cluster_id": "c_probe", "approval_request_id": "a_probe", "batch": 2, "dry_run": true, "rollback": map[string]any{"failed": 1}, "cleanup": map[string]any{"failed": 1}},
 	}); err != nil {
 		t.Fatal(err)
 	}
 	stdout.Reset()
-	if err := Run(context.Background(), []string{"audit", "show", "--home", home, "--project", created.Project.ID, "--target-engine", "nginx", "--action-prefix", "target.", "--target-id", "t_probe", "--cluster-id", "c_probe", "--approval-request-id", "a_probe", "--batch", "2", "--dry-run", "true", "--incident", "true", "--rollback-failed", "true", "--csv"}, &stdout, &stderr); err != nil {
+	if err := Run(context.Background(), []string{"audit", "show", "--home", home, "--project", created.Project.ID, "--target-engine", "nginx", "--action-prefix", "target.", "--target-id", "t_probe", "--cluster-id", "c_probe", "--approval-request-id", "a_probe", "--batch", "2", "--dry-run", "true", "--incident", "true", "--rollback-failed", "true", "--cleanup-failed", "true", "--csv"}, &stdout, &stderr); err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Contains(stdout.Bytes(), []byte("target.probe")) || !bytes.Contains(stdout.Bytes(), []byte("probe failed")) {
