@@ -148,6 +148,7 @@ Backend:
 ```sh
 go test -coverprofile dist/coverage.out ./...
 go tool cover -func dist/coverage.out
+go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 ```
 
 Frontend:
@@ -159,7 +160,7 @@ npm run test:coverage
 npx playwright install chromium
 npm run test:e2e
 npm run build
-npm audit
+npm audit --audit-level=low
 ```
 
 Current verified gates:
@@ -174,6 +175,7 @@ Current verified gates:
 | Frontend core branch coverage | 95.89% |
 | Browser E2E workflow | Playwright Chromium pass: import, edit, validate, batch approval, rollback dry-run, audit, monitor |
 | Full npm audit | 0 vulnerabilities |
+| Go vulnerability scan | govulncheck pass: 0 vulnerabilities |
 
 Frontend coverage is scoped to `webui/src/lib/**/*.ts` in `webui/vitest.config.ts`; backend coverage is measured across `./...`.
 

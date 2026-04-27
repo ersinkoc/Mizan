@@ -183,7 +183,8 @@ Production releases should pass:
 ```sh
 go test -coverprofile dist/coverage.out ./...
 go tool cover -func dist/coverage.out
-cd webui && npm run lint && npm run test:coverage && npm run test:e2e && npm run build && npm audit
+go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+cd webui && npm run lint && npm run test:coverage && npm run test:e2e && npm run build && npm audit --audit-level=low
 ```
 
 The release workflow builds cross-platform binaries and uploads a SHA-256 checksum, keyless Sigstore signature, and signing certificate beside each artifact. Before tagging a release, verify the generated binary embeds the current WebUI and returns the expected `/version` metadata.

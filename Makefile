@@ -2,7 +2,7 @@ VERSION ?= 0.1.0-dev
 COMMIT ?= local
 DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 
-.PHONY: dev ui binary test coverage lint e2e clean
+.PHONY: dev ui binary test coverage lint vuln e2e clean
 
 dev:
 	go run ./cmd/mizan serve
@@ -28,6 +28,10 @@ coverage:
 lint:
 	go test ./...
 	cd webui && npm run lint
+
+vuln:
+	go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+	cd webui && npm audit --audit-level=low
 
 e2e:
 	cd webui && npm run test:e2e

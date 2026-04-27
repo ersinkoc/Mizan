@@ -575,11 +575,12 @@ Current verified commands:
 ```sh
 go test -coverprofile dist/coverage.out ./...
 go tool cover -func dist/coverage.out
+go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 npm run lint
 npm run test:coverage
 npm run test:e2e
 npm run build
-npm audit
+npm audit --audit-level=low
 ```
 
 Current coverage state:
@@ -594,6 +595,7 @@ Current coverage state:
 | Frontend core line coverage | 100% |
 | Browser E2E workflow | Playwright Chromium pass |
 | Full npm audit | 0 vulnerabilities |
+| Go vulnerability scan | govulncheck pass: 0 vulnerabilities |
 
 ## Implemented Capabilities
 
