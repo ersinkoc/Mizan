@@ -37,6 +37,7 @@ type Result struct {
 	RequiredApprovals int           `json:"required_approvals,omitempty"`
 	ApprovedBy        []string      `json:"approved_by,omitempty"`
 	Rollback          RollbackStats `json:"rollback"`
+	Cleanup           CleanupStats  `json:"cleanup"`
 	Status            string        `json:"status"`
 	StartedAt         string        `json:"started_at"`
 	FinishedAt        string        `json:"finished_at"`
@@ -44,6 +45,13 @@ type Result struct {
 }
 
 type RollbackStats struct {
+	Planned   int `json:"planned"`
+	Attempted int `json:"attempted"`
+	Succeeded int `json:"succeeded"`
+	Failed    int `json:"failed"`
+}
+
+type CleanupStats struct {
 	Planned   int `json:"planned"`
 	Attempted int `json:"attempted"`
 	Succeeded int `json:"succeeded"`
@@ -192,6 +200,7 @@ func (d Deployer) Run(ctx context.Context, st *store.Store, req Request) (Result
 		}
 	}
 	result.Rollback = RollbackSummary(result.Steps)
+	result.Cleanup = CleanupSummary(result.Steps)
 	result.FinishedAt = d.Now().Format(time.RFC3339)
 	return result, nil
 }
@@ -570,6 +579,26 @@ func RollbackSummary(steps []Step) RollbackStats {
 	var stats RollbackStats
 	for _, step := range steps {
 		if step.Stage != "rollback" {
+			continue
+		}
+		stats.Planned++
+		if step.Status == "skipped" {
+			continue
+		}
+		stats.Attempted++
+		if step.Status == "failed" {
+			stats.Failed++
+		} else if step.Status == "success" {
+			stats.Succeeded++
+		}
+	}
+	return stats
+}
+
+func CleanupSummary(steps []Step) CleanupStats {
+	var stats CleanupStats
+	for _, step := range steps {
+		if step.Stage != "cleanup" {
 			continue
 		}
 		stats.Planned++

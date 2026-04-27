@@ -268,6 +268,12 @@ export interface DeployResult {
     succeeded: number;
     failed: number;
   };
+  cleanup: {
+    planned: number;
+    attempted: number;
+    succeeded: number;
+    failed: number;
+  };
   status: 'success' | 'failed';
   started_at: string;
   finished_at: string;

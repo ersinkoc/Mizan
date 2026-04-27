@@ -162,6 +162,9 @@ func TestProjectLifecycleEndpoints(t *testing.T) {
 	if got := fmt.Sprint(events[0].Metadata["credentials"]); strings.Contains(got, "vault") {
 		t.Fatalf("unexpected dry-run credential audit metadata: %v", events[0].Metadata["credentials"])
 	}
+	if cleanup, ok := events[0].Metadata["cleanup"].(map[string]any); !ok || cleanup["planned"] == nil {
+		t.Fatalf("unexpected dry-run cleanup audit metadata: %v", events[0].Metadata["cleanup"])
+	}
 	res = doJSON(mux, http.MethodDelete, "/api/v1/projects/"+id+"/targets/"+target.ID, nil)
 	if res.Code != http.StatusNoContent {
 		t.Fatalf("delete target status=%d body=%s", res.Code, res.Body.String())

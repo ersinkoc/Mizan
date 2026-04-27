@@ -30,7 +30,7 @@ Latest verified release: `v0.1.6`, published from commit `2ce1688`, with signed/
 - CLI secret management for encrypted target credentials
 - Deployment dry-run planning for single targets or clusters via generated rollout steps
 - CLI deployment execution through the local `ssh` command with vault-backed username/private-key support and snapshot confirmation
-- Deployment results and audit metadata include rollback summary counts
+- Deployment results and audit metadata include rollback and remote cleanup summary counts
 - Persisted API, CLI, and WebUI approval requests in `approvals.json` for snapshot-bound cluster or target rollouts
 - Target probe checks for configured post-reload or monitor endpoints
 - Monitor snapshots for registered targets through API, CLI, and WebUI

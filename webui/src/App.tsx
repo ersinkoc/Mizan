@@ -1229,6 +1229,12 @@ function DeployPlan({ result }: { result: DeployResult | null }) {
           {result.rollback.attempted ? ` / ${result.rollback.succeeded} succeeded / ${result.rollback.failed} failed` : ' / dry-run only'}
         </small>
       )}
+      {result.cleanup.planned > 0 && (
+        <small>
+          cleanup: {result.cleanup.planned} planned
+          {result.cleanup.attempted ? ` / ${result.cleanup.succeeded} succeeded / ${result.cleanup.failed} failed` : ' / dry-run only'}
+        </small>
+      )}
       <div className="deploy-steps">
         {result.steps.map((step, index) => (
           <article key={`${step.target_id}-${step.stage}-${index}`} className={`deploy-step ${step.status}`}>
@@ -1443,6 +1449,7 @@ function auditSummary(event: AuditEvent) {
   const batch = metaNumber(metadata, 'batch');
   const requestID = metaString(metadata, 'approval_request_id');
   const rollback = metaRecord(metadata, 'rollback');
+  const cleanup = metaRecord(metadata, 'cleanup');
   const requiredApprovals = metaNumber(metadata, 'required_approvals');
   const approvals = metaNumber(metadata, 'approvals');
   const status = metaString(metadata, 'status');
@@ -1473,6 +1480,25 @@ function auditSummary(event: AuditEvent) {
     }
     if (failed > 0) {
       items.push(`rollback ${failed} failed`);
+      incident = true;
+    }
+  }
+  if (cleanup) {
+    const planned = metaNumber(cleanup, 'planned');
+    const attempted = metaNumber(cleanup, 'attempted');
+    const succeeded = metaNumber(cleanup, 'succeeded');
+    const failed = metaNumber(cleanup, 'failed');
+    if (planned > 0) {
+      items.push(`cleanup ${planned} planned`);
+    }
+    if (attempted > 0) {
+      items.push(`cleanup ${attempted} attempted`);
+    }
+    if (succeeded > 0) {
+      items.push(`cleanup ${succeeded} succeeded`);
+    }
+    if (failed > 0) {
+      items.push(`cleanup ${failed} failed`);
       incident = true;
     }
   }

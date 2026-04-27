@@ -514,6 +514,7 @@ func (h *Handler) deploy(w http.ResponseWriter, r *http.Request) {
 		"required_approvals": result.RequiredApprovals,
 		"approved_by":        result.ApprovedBy,
 		"rollback":           result.Rollback,
+		"cleanup":            result.Cleanup,
 		"credentials":        deploy.CredentialSources(result.Steps),
 	})
 	writeJSON(w, http.StatusOK, result)

@@ -40,6 +40,9 @@ func TestRunDryTargetAndCluster(t *testing.T) {
 	if result.Status != "success" || !result.DryRun || result.StartedAt != now.Format(time.RFC3339) || len(result.Steps) != 7 {
 		t.Fatalf("unexpected target deploy result: %+v", result)
 	}
+	if result.Cleanup.Planned != 1 || result.Cleanup.Attempted != 0 {
+		t.Fatalf("unexpected dry-run cleanup summary: %+v", result.Cleanup)
+	}
 	if result.Steps[1].Status != "skipped" || result.Steps[1].Message != "dry run" {
 		t.Fatalf("expected skipped upload step: %+v", result.Steps[1])
 	}
@@ -228,6 +231,38 @@ func TestRunExecuteRecordsRollbackSummary(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(commands, "\n"), "cp /etc/haproxy") {
 		t.Fatalf("rollback command was not executed: %v", commands)
+	}
+}
+
+func TestRunExecuteRecordsCleanupSummary(t *testing.T) {
+	st := store.New(t.TempDir())
+	meta, _, _, err := st.CreateProject(t.Context(), "edge", "", []ir.Engine{ir.EngineHAProxy})
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := st.UpsertTarget(t.Context(), meta.ID, store.Target{Name: "edge", Host: "edge.example.com", Engine: ir.EngineHAProxy})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, snapshot, err := st.GetIR(t.Context(), meta.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deployer := Deployer{
+		Runner: func(_ context.Context, _ store.Target, _ secrets.Secret, command string, _ string) (string, error) {
+			if strings.HasPrefix(command, "rm -f ") {
+				return "cleanup failed", errors.New("exit 1")
+			}
+			return "ok", nil
+		},
+		Prober: func(context.Context, string) error { return nil },
+	}
+	result, err := deployer.Run(t.Context(), st, Request{ProjectID: meta.ID, TargetID: target.ID, ConfirmSnapshotHash: snapshot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "failed" || result.Cleanup.Planned != 1 || result.Cleanup.Attempted != 1 || result.Cleanup.Failed != 1 || result.Cleanup.Succeeded != 0 {
+		t.Fatalf("unexpected cleanup summary result=%+v", result)
 	}
 }
 
@@ -476,6 +511,15 @@ func TestCommandsAndHelpers(t *testing.T) {
 	})
 	if rollbackStats.Planned != 3 || rollbackStats.Attempted != 2 || rollbackStats.Succeeded != 1 || rollbackStats.Failed != 1 {
 		t.Fatalf("unexpected rollback stats: %+v", rollbackStats)
+	}
+	cleanupStats := CleanupSummary([]Step{
+		{Stage: "cleanup", Status: "skipped"},
+		{Stage: "cleanup", Status: "success"},
+		{Stage: "cleanup", Status: "failed"},
+		{Stage: "rollback", Status: "failed"},
+	})
+	if cleanupStats.Planned != 3 || cleanupStats.Attempted != 2 || cleanupStats.Succeeded != 1 || cleanupStats.Failed != 1 {
+		t.Fatalf("unexpected cleanup stats: %+v", cleanupStats)
 	}
 }
 

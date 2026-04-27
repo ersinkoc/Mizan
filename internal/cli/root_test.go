@@ -333,6 +333,9 @@ func TestProjectGenerateValidateAndSnapshotCommands(t *testing.T) {
 	if got := fmt.Sprint(events[0].Metadata["credentials"]); !strings.Contains(got, "vault") || strings.Contains(got, "PRIVATE KEY") || strings.Contains(got, "vault-user") {
 		t.Fatalf("unexpected deploy credential audit metadata: %v", events[0].Metadata["credentials"])
 	}
+	if cleanup, ok := events[0].Metadata["cleanup"].(map[string]any); !ok || cleanup["succeeded"] == nil {
+		t.Fatalf("unexpected deploy cleanup audit metadata: %v", events[0].Metadata["cleanup"])
+	}
 	stdout.Reset()
 	if err := Run(context.Background(), []string{"audit", "show", "--home", home, "--project", created.Project.ID, "--action", "deploy.run", "--actor", "cli", "--outcome", "success", "--from", "2000-01-01T00:00:00Z", "--to", "2100-01-01T00:00:00Z", "--dry-run", "true", "--incident", "false", "--limit", "1"}, &stdout, &stderr); err != nil {
 		t.Fatal(err)

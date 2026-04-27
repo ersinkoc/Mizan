@@ -198,14 +198,16 @@ mizan target add \
   --rollback-command 'cp /etc/haproxy/haproxy.cfg.bak /etc/haproxy/haproxy.cfg && systemctl reload haproxy'
 ```
 
-Deployment results and `deploy.run` audit metadata include a rollback summary:
+Deployment results and `deploy.run` audit metadata include rollback and remote cleanup summaries:
 
 - `planned`: rollback steps present in the rollout plan, including dry-run-only rollback steps.
 - `attempted`: rollback commands actually executed during a non-dry-run deployment.
 - `succeeded`: rollback commands that exited successfully.
 - `failed`: rollback commands that were attempted but failed.
 
-Treat `rollback.failed > 0` as an incident signal. Inspect the per-step command output, confirm the active HAProxy/Nginx config on the target, and pause later batches until the target is manually recovered.
+The `cleanup` summary uses the same `planned`, `attempted`, `succeeded`, and `failed` fields for remote temporary config cleanup steps.
+
+Treat `rollback.failed > 0` or `cleanup.failed > 0` as an incident signal. Inspect the per-step command output, confirm the active HAProxy/Nginx config on the target, and pause later batches until the target is manually recovered.
 
 ## CI and Release Gates
 

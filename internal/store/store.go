@@ -444,7 +444,7 @@ func matchesAuditFilter(event AuditEvent, filter AuditFilter) bool {
 }
 
 func auditIncident(event AuditEvent) bool {
-	return event.Outcome == "failed" || auditRollbackFailed(event)
+	return event.Outcome == "failed" || auditRollbackFailed(event) || auditCleanupFailed(event)
 }
 
 func auditRollbackFailed(event AuditEvent) bool {
@@ -453,6 +453,14 @@ func auditRollbackFailed(event AuditEvent) bool {
 		return false
 	}
 	return auditMetadataInt(rollback, "failed") > 0
+}
+
+func auditCleanupFailed(event AuditEvent) bool {
+	cleanup, ok := event.Metadata["cleanup"].(map[string]any)
+	if !ok {
+		return false
+	}
+	return auditMetadataInt(cleanup, "failed") > 0
 }
 
 func auditMetadataString(metadata map[string]any, key string) string {

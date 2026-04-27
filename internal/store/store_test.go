@@ -74,6 +74,7 @@ func TestAuditAppendAndList(t *testing.T) {
 		{ProjectID: meta.ID, Actor: "Bob", Action: "target.probe", Outcome: "failed", TargetEngine: ir.EngineNginx, Timestamp: base.Add(time.Hour), Metadata: map[string]any{"target_id": "t_1", "dry_run": true, "batch": 2}},
 		{ProjectID: meta.ID, Actor: "Alice", Action: "approval.request", Outcome: "success", TargetEngine: ir.EngineNginx, Timestamp: base.Add(2 * time.Hour), Metadata: map[string]any{"cluster_id": "c_1", "approval_request_id": "a_1"}},
 		{ProjectID: meta.ID, Actor: "Alice", Action: "deploy.run", Outcome: "success", TargetEngine: ir.EngineNginx, Timestamp: base.Add(3 * time.Hour), Metadata: map[string]any{"rollback": map[string]any{"failed": 1}}},
+		{ProjectID: meta.ID, Actor: "Alice", Action: "deploy.run", Outcome: "success", TargetEngine: ir.EngineNginx, Timestamp: base.Add(4 * time.Hour), Metadata: map[string]any{"cleanup": map[string]any{"failed": 1}}},
 	} {
 		if err := st.AppendAudit(ctx, event); err != nil {
 			t.Fatal(err)

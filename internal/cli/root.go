@@ -818,6 +818,7 @@ func deployCmd(ctx context.Context, args []string, stdout, stderr io.Writer) err
 			"approved_by":         result.ApprovedBy,
 			"approval_request_id": *approvalRequestID,
 			"rollback":            result.Rollback,
+			"cleanup":             result.Cleanup,
 			"credentials":         deploy.CredentialSources(result.Steps),
 		},
 	})
