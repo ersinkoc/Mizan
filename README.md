@@ -194,6 +194,12 @@ Full release gate:
 make release-check
 ```
 
+Verify a published GitHub Release:
+
+```powershell
+.\scripts\verify-release.ps1 -Tag v0.1.4
+```
+
 Current verified gates:
 
 | Area | Status |
