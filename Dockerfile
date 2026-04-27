@@ -1,4 +1,4 @@
-FROM node:22-bookworm-slim AS webui
+FROM node:25-bookworm-slim AS webui
 
 WORKDIR /src/webui
 COPY webui/package.json webui/package-lock.json ./
