@@ -541,6 +541,7 @@ flowchart LR
   WebDist["webui/dist"]
   EmbedDist["internal/server/dist"]
   GoBuild["go build ./cmd/mizan"]
+  DockerBuild["docker build\nuses prepared embedded dist"]
   Binary["dist/mizan.exe"]
   Serve["mizan serve"]
   Browser["http://127.0.0.1:7890"]
@@ -548,6 +549,8 @@ flowchart LR
   WebSrc --> Vite --> WebDist
   WebDist --> EmbedDist
   EmbedDist --> GoBuild
+  EmbedDist --> DockerBuild
+  GoBuild --> DockerBuild
   GoBuild --> Binary
   Binary --> Serve --> Browser
 ```

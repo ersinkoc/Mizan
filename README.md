@@ -132,6 +132,7 @@ go build -o dist/mizan.exe ./cmd/mizan
 Container image:
 
 ```sh
+make ui
 docker build -t mizan:local .
 docker run --rm -p 127.0.0.1:7890:7890 -v mizan-data:/var/lib/mizan -e MIZAN_AUTH_TOKEN=change-me mizan:local
 ```

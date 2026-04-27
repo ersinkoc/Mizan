@@ -52,6 +52,7 @@ MIZAN_SHUTDOWN_TIMEOUT=10s
 Container example:
 
 ```sh
+make ui
 docker build -t mizan:local .
 docker run -d --name mizan \
   -p 127.0.0.1:7890:7890 \
