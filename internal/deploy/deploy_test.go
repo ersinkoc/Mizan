@@ -324,7 +324,7 @@ func TestRunTargetErrorAndProbeBranches(t *testing.T) {
 		t.Fatalf("expected generation failure: %+v", steps)
 	}
 	steps = deployer.runTarget(t.Context(), model, "p_1", store.Target{ID: "t_1", Name: "edge", Engine: ir.EngineHAProxy, Host: "host", Port: 22, User: "root", ConfigPath: "/etc/haproxy/haproxy.cfg", ReloadCommand: "reload", PostReloadProbe: "https://edge.example.com/healthz"}, secrets.Secret{}, 1, false)
-	if !hasFailed(steps) || steps[1].Credential != "local_ssh" || steps[len(steps)-1].Stage != "probe" {
+	if !hasFailed(steps) || steps[1].Credential != "local_ssh" || steps[len(steps)-2].Stage != "probe" || steps[len(steps)-1].Stage != "cleanup" {
 		t.Fatalf("expected probe failure: %+v", steps)
 	}
 	deployer.Prober = func(context.Context, string) error { return nil }
@@ -366,10 +366,10 @@ func TestRunTargetRollbackHook(t *testing.T) {
 		Sudo:            true,
 	}
 	steps := deployer.runTarget(t.Context(), model, "p_1", target, secrets.Secret{}, 1, false)
-	if len(steps) < 2 || steps[len(steps)-1].Stage != "rollback" || steps[len(steps)-1].Status != "success" {
+	if len(steps) < 3 || steps[len(steps)-2].Stage != "rollback" || steps[len(steps)-2].Status != "success" || steps[len(steps)-1].Stage != "cleanup" {
 		t.Fatalf("expected successful rollback after reload failure: %+v", steps)
 	}
-	if !strings.Contains(steps[len(steps)-1].Command, "sudo sh -lc") || !strings.Contains(strings.Join(commands, "\n"), "cp /etc/haproxy") {
+	if !strings.Contains(steps[len(steps)-2].Command, "sudo sh -lc") || !strings.Contains(strings.Join(commands, "\n"), "cp /etc/haproxy") {
 		t.Fatalf("rollback command was not executed with sudo: steps=%+v commands=%v", steps, commands)
 	}
 
@@ -391,7 +391,7 @@ func TestRunTargetRollbackHook(t *testing.T) {
 		return "ok", nil
 	}
 	steps = deployer.runTarget(t.Context(), model, "p_1", target, secrets.Secret{}, 1, false)
-	if steps[len(steps)-1].Stage != "rollback" || steps[len(steps)-1].Status != "failed" {
+	if steps[len(steps)-2].Stage != "rollback" || steps[len(steps)-2].Status != "failed" || steps[len(steps)-1].Stage != "cleanup" {
 		t.Fatalf("expected failed rollback step: %+v", steps)
 	}
 	if stats := RollbackSummary(steps); stats.Planned != 1 || stats.Attempted != 1 || stats.Failed != 1 {
@@ -413,6 +413,28 @@ func TestRunTargetCleanupFailure(t *testing.T) {
 	steps := deployer.runTarget(t.Context(), model, "p_1", store.Target{ID: "t_1", Name: "edge", Engine: ir.EngineHAProxy, Host: "host", Port: 22, User: "root", ConfigPath: "/etc/haproxy/haproxy.cfg", ReloadCommand: "reload"}, secrets.Secret{}, 1, false)
 	if !hasFailed(steps) || steps[len(steps)-1].Stage != "cleanup" || steps[len(steps)-1].Message == "" {
 		t.Fatalf("expected cleanup failure: %+v", steps)
+	}
+}
+
+func TestRunTargetCleansUpAfterRemoteValidationFailure(t *testing.T) {
+	var commands []string
+	deployer := Deployer{
+		Runner: func(_ context.Context, _ store.Target, _ secrets.Secret, command string, _ string) (string, error) {
+			commands = append(commands, command)
+			if strings.Contains(command, "haproxy -c") {
+				return "invalid config", errors.New("exit 1")
+			}
+			return "ok", nil
+		},
+		Prober: func(context.Context, string) error { return nil },
+	}
+	model := ir.EmptyModel("p_1", "edge", "", []ir.Engine{ir.EngineHAProxy})
+	steps := deployer.runTarget(t.Context(), model, "p_1", store.Target{ID: "t_1", Name: "edge", Engine: ir.EngineHAProxy, Host: "host", Port: 22, User: "root", ConfigPath: "/etc/haproxy/haproxy.cfg", ReloadCommand: "reload"}, secrets.Secret{}, 1, false)
+	if len(steps) != 4 || steps[len(steps)-2].Stage != "remote_validate" || steps[len(steps)-2].Status != "failed" || steps[len(steps)-1].Stage != "cleanup" || steps[len(steps)-1].Status != "success" {
+		t.Fatalf("expected validation failure followed by cleanup: %+v", steps)
+	}
+	if strings.Contains(strings.Join(commands, "\n"), "install -m") {
+		t.Fatalf("install should not run after validation failure: %v", commands)
 	}
 }
 

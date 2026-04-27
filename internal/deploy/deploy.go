@@ -272,6 +272,7 @@ func (d Deployer) runTarget(ctx context.Context, model *ir.Model, projectID stri
 			if target.RollbackCommand != "" && (item.stage == "install" || item.stage == "reload") {
 				steps = append(steps, d.rollbackStep(ctx, target, credential, batch, dryRun))
 			}
+			steps = append(steps, d.cleanupStep(ctx, target, credential, batch, dryRun, remoteTmp))
 			return steps
 		} else {
 			step.Credential = credentialSource(credential)
@@ -292,6 +293,7 @@ func (d Deployer) runTarget(ctx context.Context, model *ir.Model, projectID stri
 			if target.RollbackCommand != "" {
 				steps = append(steps, d.rollbackStep(ctx, target, credential, batch, dryRun))
 			}
+			steps = append(steps, d.cleanupStep(ctx, target, credential, batch, dryRun, remoteTmp))
 			return steps
 		} else {
 			step.Status = "success"
@@ -301,6 +303,11 @@ func (d Deployer) runTarget(ctx context.Context, model *ir.Model, projectID stri
 	if dryRun && target.RollbackCommand != "" {
 		steps = append(steps, d.rollbackStep(ctx, target, credential, batch, dryRun))
 	}
+	steps = append(steps, d.cleanupStep(ctx, target, credential, batch, dryRun, remoteTmp))
+	return steps
+}
+
+func (d Deployer) cleanupStep(ctx context.Context, target store.Target, credential secrets.Secret, batch int, dryRun bool, remoteTmp string) Step {
 	cleanup := Step{TargetID: target.ID, TargetName: target.Name, Engine: target.Engine, Stage: "cleanup", Command: cleanupCommand(remoteTmp), Batch: batch}
 	if dryRun {
 		cleanup.Status = "skipped"
@@ -309,15 +316,12 @@ func (d Deployer) runTarget(ctx context.Context, model *ir.Model, projectID stri
 		cleanup.Credential = credentialSource(credential)
 		cleanup.Status = "failed"
 		cleanup.Message = strings.TrimSpace(output + "\n" + runErr.Error())
-		steps = append(steps, cleanup)
-		return steps
 	} else {
 		cleanup.Credential = credentialSource(credential)
 		cleanup.Status = "success"
 		cleanup.Message = strings.TrimSpace(output)
 	}
-	steps = append(steps, cleanup)
-	return steps
+	return cleanup
 }
 
 func (d Deployer) rollbackStep(ctx context.Context, target store.Target, credential secrets.Secret, batch int, dryRun bool) Step {
