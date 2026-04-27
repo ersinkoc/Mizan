@@ -833,6 +833,7 @@ func deployDrillCmd(ctx context.Context, args []string, stdout, stderr io.Writer
 	fs.SetOutput(stderr)
 	summary := fs.Bool("summary", false, "write compact drill summary JSON")
 	format := fs.String("format", "json", "output format: json, summary, or text")
+	out := fs.String("out", "", "write drill output to file")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -845,17 +846,41 @@ func deployDrillCmd(ctx context.Context, args []string, stdout, stderr io.Writer
 		}
 		*format = "summary"
 	}
+	if *format != "json" && *format != "summary" && *format != "text" {
+		return fmt.Errorf("invalid --format %q", *format)
+	}
 	report := deploy.RunDrill(ctx)
-	if *format == "text" {
-		if _, err := io.WriteString(stdout, deploy.FormatDrillText(report)); err != nil {
+	output := stdout
+	var outputFile *os.File
+	if *out != "" {
+		f, err := os.Create(*out)
+		if err != nil {
 			return err
+		}
+		output = f
+		outputFile = f
+		defer func() {
+			if outputFile != nil {
+				_ = outputFile.Close()
+			}
+		}()
+	}
+	if *format == "text" {
+		if _, err := io.WriteString(output, deploy.FormatDrillText(report)); err != nil {
+			return err
+		}
+		if outputFile != nil {
+			if err := outputFile.Close(); err != nil {
+				return err
+			}
+			outputFile = nil
 		}
 		if report.Status != "success" {
 			return errors.New("deploy drill failed")
 		}
 		return nil
 	}
-	encoder := json.NewEncoder(stdout)
+	encoder := json.NewEncoder(output)
 	encoder.SetIndent("", "  ")
 	encoder.SetEscapeHTML(false)
 	switch *format {
@@ -867,8 +892,12 @@ func deployDrillCmd(ctx context.Context, args []string, stdout, stderr io.Writer
 		if err := encoder.Encode(deploy.SummarizeDrill(report)); err != nil {
 			return err
 		}
-	default:
-		return fmt.Errorf("invalid --format %q", *format)
+	}
+	if outputFile != nil {
+		if err := outputFile.Close(); err != nil {
+			return err
+		}
+		outputFile = nil
 	}
 	if report.Status != "success" {
 		return errors.New("deploy drill failed")
@@ -1743,7 +1772,7 @@ Usage:
   mizan deploy --project <id> --target-id <target-id>
   mizan deploy --project <id> --cluster-id <cluster-id> [--batch 1]
   mizan deploy --project <id> --cluster-id <cluster-id> --execute --confirm-snapshot <snapshot_hash> --approved-by alice,bob
-  mizan deploy drill [--summary] [--format json|summary|text]
+  mizan deploy drill [--summary] [--format json|summary|text] [--out file]
   mizan approval request --project <id> --cluster-id <cluster-id> [--batch 1]
   mizan approval approve --project <id> --actor alice <approval-request-id>
   mizan deploy --project <id> --approval-request-id <approval-request-id> --execute

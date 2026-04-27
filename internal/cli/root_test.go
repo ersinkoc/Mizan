@@ -316,6 +316,32 @@ func TestProjectGenerateValidateAndSnapshotCommands(t *testing.T) {
 		t.Fatalf("deploy drill text output unexpected: %s", stdout.String())
 	}
 	stdout.Reset()
+	drillSummaryPath := filepath.Join(t.TempDir(), "drill-summary.json")
+	if err := Run(context.Background(), []string{"deploy", "drill", "--summary", "--out", drillSummaryPath}, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("expected deploy drill --out to leave stdout empty, got %s", stdout.String())
+	}
+	drillSummary, err := os.ReadFile(drillSummaryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(drillSummary, []byte(`"totals"`)) || bytes.Contains(drillSummary, []byte(`"commands"`)) {
+		t.Fatalf("deploy drill summary file unexpected: %s", string(drillSummary))
+	}
+	drillTextPath := filepath.Join(t.TempDir(), "drill.txt")
+	if err := Run(context.Background(), []string{"deploy", "drill", "--format", "text", "--out", drillTextPath}, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	drillText, err := os.ReadFile(drillTextPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(drillText, []byte("Mizan deploy drill: success")) || !bytes.Contains(drillText, []byte("rollback attempted=2")) {
+		t.Fatalf("deploy drill text file unexpected: %s", string(drillText))
+	}
+	stdout.Reset()
 	if err := Run(context.Background(), []string{"monitor", "snapshot", "--home", home, "--project", created.Project.ID}, &stdout, &stderr); err != nil {
 		t.Fatal(err)
 	}

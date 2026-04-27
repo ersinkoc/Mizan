@@ -11,6 +11,7 @@ Use these drills before the first production rollout and after meaningful deploy
 - Snapshot or back up remote config files before starting.
 - Run `mizan deploy drill --summary` locally first and require `status: success`.
 - Run `mizan deploy drill --format text` when an operator needs a quick human-readable terminal summary.
+- Archive local drill evidence with `mizan deploy drill --summary --out staging-drill-summary.json`.
 
 Example rollback commands:
 
@@ -81,6 +82,7 @@ Goal: prove stale temp cleanup failures are visible and treated as incident sign
 ## Evidence To Keep
 
 - Dry-run output with `snapshot_hash`.
+- Local drill summary from `mizan deploy drill --summary --out staging-drill-summary.json`.
 - Execute output JSON.
 - `mizan audit show --project <id> --action deploy.run --incident true`.
 - `mizan monitor snapshot --project <id>`.

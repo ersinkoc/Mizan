@@ -99,6 +99,7 @@ go run ./cmd/mizan deploy --project <id> --target-id <target-id>
 go run ./cmd/mizan deploy --project <id> --cluster-id <cluster-id> --batch 1
 go run ./cmd/mizan deploy drill --summary
 go run ./cmd/mizan deploy drill --format text
+go run ./cmd/mizan deploy drill --summary --out staging-drill-summary.json
 go run ./cmd/mizan approval request --project <id> --cluster-id <cluster-id> --batch 1
 go run ./cmd/mizan approval approve --project <id> --actor alice <approval-request-id>
 go run ./cmd/mizan approval approve --project <id> --actor bob <approval-request-id>
@@ -218,6 +219,12 @@ For a concise terminal summary, run:
 
 ```sh
 go run ./cmd/mizan deploy drill --format text
+```
+
+For archived staging evidence, write drill output directly to a file:
+
+```sh
+go run ./cmd/mizan deploy drill --summary --out staging-drill-summary.json
 ```
 
 Workflow-only gate:
