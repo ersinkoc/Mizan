@@ -8,9 +8,13 @@ Mizan is a local-first visual configuration architect for HAProxy and Nginx. It 
 flowchart LR
   Foundation["Foundation\nGo CLI + HTTP server\nEmbedded React UI"]:::done
   Auth["Local Auth\nBearer + Basic\nrequired for external bind"]:::done
+  Hardening["HTTP Hardening\nsecurity headers\nbody limits + timeouts"]:::done
   Secrets["Secrets Vault\nArgon2id + AES-GCM\nCLI set/get/list/delete"]:::done
   Metrics["System Metrics\n/metrics Prometheus text\nbuild + project + HTTP counts"]:::done
   ProjectExport["Project Export\nPortable JSON backup\nIR + targets"]:::done
+  Backup["Home Backup\nzip archive\ninspect + restore"]:::done
+  Packaging["Production Packaging\nDockerfile + systemd\nNginx TLS example"]:::done
+  Doctor["Production Doctor\npreflight checks\nroot + tools"]:::done
   IR["Universal IR\nLint, mutate, hash\nSnapshots"]:::done
   Import["Import\nBasic HAProxy/Nginx parser"]:::done
   Generate["Generate\nHAProxy + Nginx translators"]:::done
@@ -26,12 +30,17 @@ flowchart LR
   NginxMonitor["Nginx Monitor\nstub_status parser\nconnection summary"]:::done
   MonitorStream["Monitor Stream\nSSE snapshot events\ninterval + limit controls"]:::done
   Deploy["SSH Deploy\nCLI --execute\nvault username/key"]:::done
-  ProjectStream["Non-audit Project Streams\nNot implemented yet"]:::todo
+  DeployConfirm["Deploy Confirmation\nexecute requires\nsnapshot hash"]:::done
+  ProjectStream["Project Streams\nmetadata + targets + audit\nWebUI live panels"]:::done
 
   Foundation --> Auth
+  Auth --> Hardening
   Auth --> Secrets
   Foundation --> Metrics
   Foundation --> ProjectExport
+  ProjectExport --> Backup
+  Foundation --> Packaging
+  Foundation --> Doctor
   Foundation --> IR --> Import --> Generate --> Validate
   IR --> Topology
   IR --> Audit
@@ -39,7 +48,7 @@ flowchart LR
   Audit --> Targets
   Targets --> TargetProbe
   Targets --> DeployPlan
-  DeployPlan --> Deploy
+  DeployPlan --> DeployConfirm --> Deploy
   Validate --> Deploy
   Targets --> MonitorBase
   MonitorBase --> HAProxyMonitor
@@ -321,6 +330,8 @@ sequenceDiagram
 
 The deploy package computes the rollout steps for one target or a cluster: upload generated config, remote validate, install, reload, optional post-reload probe, and remote temp-file cleanup. The WebUI currently invokes this as a dry run. The CLI defaults to dry-run planning and can run the same path with `--execute`, using the local `ssh` command to execute each remote step.
 
+Approval requests are persisted per project in `approvals.json`. `POST /api/v1/projects/{id}/approvals` and `mizan approval request` capture the current IR snapshot hash for a target or cluster rollout, store the required approval count from the selected cluster, and emit `approval.request` audit events. `POST /api/v1/projects/{id}/approvals/{approvalID}/approve` and `mizan approval approve` record distinct approvers case-insensitively and mark the request approved once the threshold is met. Deploy execution can reference `approval_request_id` or `--approval-request-id`; Mizan then verifies the target or cluster, batch, and snapshot hash before passing the approved actors into the deploy gate. The WebUI can create approval requests from target or cluster cards, collect named approvals, preview the approved request, and execute it after an explicit browser confirmation.
+
 Target probe checks reuse the same HTTP probe helper without running SSH or deployment steps. `POST /api/v1/projects/{id}/targets/{targetID}/probe` tests a target's `post_reload_probe` URL, falling back to `monitor_endpoint`, and records a `target.probe` audit event.
 
 The same flow is exposed from the CLI:
@@ -328,6 +339,9 @@ The same flow is exposed from the CLI:
 ```sh
 mizan deploy --project <id> --target-id <target-id>
 mizan deploy --project <id> --cluster-id <cluster-id>
+mizan approval request --project <id> --cluster-id <cluster-id> --batch 1
+mizan approval approve --project <id> --actor alice <approval-request-id>
+mizan deploy --project <id> --approval-request-id <approval-request-id> --execute
 mizan monitor snapshot --project <id>
 mizan monitor stream --project <id> --limit 10 --interval 5s
 ```
@@ -427,6 +441,7 @@ flowchart TB
   Meta["project.json"]
   Config["config.json\ncurrent IR"]
   Targets["targets.json\ndeploy targets + clusters"]
+  Approvals["approvals.json\nsnapshot-bound rollout approvals"]
   Snapshots["snapshots/"]
   Snapshot["timestamp-hash.json"]
   Tags["snapshot-tags.json"]
@@ -438,6 +453,7 @@ flowchart TB
   Project --> Meta
   Project --> Config
   Project --> Targets
+  Project --> Approvals
   Project --> Snapshots
   Snapshots --> Snapshot
   Project --> Tags
@@ -461,9 +477,11 @@ sequenceDiagram
   Store->>Store: write config.json
   Store->>Snapshot: write timestamp-hash.json
   API->>Audit: append ir.patch
+  EventStream->>Store: poll project metadata and targets
+  EventStream-->>API: SSE project / targets events
   EventStream->>Audit: poll recent events
   EventStream-->>API: SSE audit event
-  API->>Audit: list filtered by actor/action/outcome/engine/time
+  API->>Audit: list filtered by actor/action/outcome/engine/time/metadata/incident
   API->>Audit: export filtered CSV
 
   API->>Store: TagSnapshot(ref, label)
@@ -488,7 +506,7 @@ flowchart LR
   Snapshots["Snapshots panel"]
   Targets["Targets / clusters panel"]
   Audit["Audit panel"]
-  AuditFilters["Audit filters\nactor/action/outcome/engine"]
+  AuditFilters["Audit filters\nactor/action/outcome/engine\nmetadata + incident quick views"]
   AuditCSV["Audit CSV export"]
   EventStream["Project event stream"]
 
@@ -505,6 +523,8 @@ flowchart LR
   AuditCSV --> APIClient
   APIClient --> EventStream
   EventStream --> Audit
+  EventStream --> Targets
+  EventStream --> Snapshots
   Topology -->|move/connect| App
   IRDraft -->|Save| APIClient
   GeneratePanel -->|Generate/Validate| APIClient
@@ -539,11 +559,13 @@ flowchart TB
   Tests["Automated tests"]
   Go["Go test suite\nPASS"]
   FE["Frontend Vitest\nPASS"]
+  E2E["Playwright browser workflow\nPASS"]
   FECoverage["Frontend core coverage\n100% statements\n100% functions\n100% lines\n95.89% branches"]
-  GoCoverage["Go total coverage\n100.0% statements"]
+  GoCoverage["Go total coverage\n96.7% statements"]
 
   Tests --> Go
   Tests --> FE
+  Tests --> E2E
   FE --> FECoverage
   Go --> GoCoverage
 ```
@@ -555,6 +577,7 @@ go test -coverprofile dist/coverage.out ./...
 go tool cover -func dist/coverage.out
 npm run lint
 npm run test:coverage
+npm run test:e2e
 npm run build
 npm audit
 ```
@@ -564,11 +587,12 @@ Current coverage state:
 | Area | Status |
 |---|---:|
 | Go test pass rate | 100% |
-| Go total statement coverage | 100.0% |
+| Go total statement coverage | 96.7% |
 | Frontend core statement coverage | 100% |
 | Frontend core branch coverage | 95.89% |
 | Frontend core function coverage | 100% |
 | Frontend core line coverage | 100% |
+| Browser E2E workflow | Playwright Chromium pass |
 | Full npm audit | 0 vulnerabilities |
 
 ## Implemented Capabilities
@@ -590,6 +614,13 @@ mindmap
       request counters
       bearer auth
       basic auth
+      security headers
+      request body limits
+      server timeouts
+      docker image
+      systemd unit
+      nginx TLS proxy example
+      doctor preflight
       encrypted secrets
       secret CLI
     IR
@@ -607,11 +638,15 @@ mindmap
       audit CSV export
       CLI audit show
       targets.json
+      hash-verified home backup archives
     Deployment
       dry-run plan
+      snapshot confirmation
+      approval count gate
+      rollback hook
       target probe
       target selection
-      cluster batches
+      selectable cluster batches
       audit event
     Monitoring
       snapshot API
@@ -675,7 +710,7 @@ flowchart LR
   DiffUI --> Wizard
 ```
 
-The codebase is now a working product foundation, not yet a full v1 implementation. Target and cluster persistence plus dry-run deployment planning exist, CLI deployments can execute over the local `ssh` command with vault-backed username/private key credentials, HAProxy/Nginx monitor snapshots can be collected from HTTP endpoints, and monitor snapshots can be streamed over SSE. Password/passphrase automation, staged rollout safety gates, non-audit project event streams, full parser round-trip, richer wizard editing, and deeper diff UI are still future work.
+The codebase is now a working product foundation, not yet a full v1 implementation. Target and cluster persistence plus dry-run deployment planning exist, persisted approval requests can bind a rollout to a specific snapshot and be reviewed from the WebUI or CLI, CLI deployments can execute over the local `ssh` command with vault-backed username/private key credentials, selectable cluster batches, approval count gates, and optional rollback hooks with rollback summary counts in deploy results and audit metadata. HAProxy/Nginx monitor snapshots can be collected from HTTP endpoints, and monitor plus project state can be streamed over SSE. Browser E2E now covers import, IR edit, validation, target registration, cluster batch approval, rollback dry-run visibility, audit, and monitor. Password/passphrase automation, stronger multi-actor identity integration, full advanced parser round-trip, richer wizard editing, browser-level executed rollback failure simulation, and deeper diff UI are still future work.
 
 ## Design Principles
 
@@ -685,4 +720,4 @@ The codebase is now a working product foundation, not yet a full v1 implementati
 - **No database**: project state is JSON, easy to inspect and Git-version.
 - **Pure translators**: target configs are deterministic outputs of the IR.
 - **Append-only audit**: project history is observable and never rewritten.
-- **Progressive hardening**: backend statement coverage is currently 100%, while frontend core library coverage is gated at 100% statements, functions, and lines.
+- **Progressive hardening**: backend statement coverage is currently 96.7%, while frontend core library coverage is gated at 100% statements, functions, and lines.

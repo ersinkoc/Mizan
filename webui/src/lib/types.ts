@@ -16,6 +16,12 @@ export interface ProjectExport {
   ir: Model;
   version: string;
   targets: TargetsResponse;
+  approvals: ApprovalRequest[];
+}
+
+export interface ProjectStreamEvent {
+  project: ProjectMeta;
+  version: string;
 }
 
 export interface Model {
@@ -158,8 +164,16 @@ export interface AuditFilters {
   to?: string;
   actor?: string;
   action?: string;
+  action_prefix?: string;
   outcome?: string;
   target_engine?: Engine | '';
+  target_id?: string;
+  cluster_id?: string;
+  approval_request_id?: string;
+  batch?: number;
+  dry_run?: boolean;
+  incident?: boolean;
+  rollback_failed?: boolean;
 }
 
 export interface DiffChange {
@@ -184,6 +198,7 @@ export interface Target {
   engine: Engine;
   config_path: string;
   reload_command: string;
+  rollback_command?: string;
   sudo: boolean;
   post_reload_probe?: string;
   monitor_endpoint?: string;
@@ -197,6 +212,7 @@ export interface Cluster {
   target_ids: string[];
   parallelism: number;
   gate_on_failure: boolean;
+  required_approvals?: number;
   created_at: string;
   updated_at: string;
 }
@@ -204,6 +220,25 @@ export interface Cluster {
 export interface TargetsResponse {
   targets: Target[];
   clusters: Cluster[];
+}
+
+export interface Approval {
+  actor: string;
+  approved_at: string;
+}
+
+export interface ApprovalRequest {
+  id: string;
+  project_id: string;
+  target_id?: string;
+  cluster_id?: string;
+  snapshot_hash: string;
+  batch?: number;
+  required_approvals: number;
+  approvals: Approval[];
+  status: 'pending' | 'approved';
+  created_at: string;
+  updated_at: string;
 }
 
 export interface DeployStep {
@@ -224,6 +259,15 @@ export interface DeployResult {
   cluster_id?: string;
   snapshot_hash: string;
   dry_run: boolean;
+  batch?: number;
+  required_approvals?: number;
+  approved_by?: string[];
+  rollback: {
+    planned: number;
+    attempted: number;
+    succeeded: number;
+    failed: number;
+  };
   status: 'success' | 'failed';
   started_at: string;
   finished_at: string;

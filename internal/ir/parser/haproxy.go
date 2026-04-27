@@ -131,13 +131,14 @@ func parseHAProxyBackendLine(m *ir.Model, be *ir.Backend, fields []string) {
 		}
 	case "option":
 		if len(fields) >= 3 && fields[1] == "httpchk" {
-			hcID := normalizeID("hc", be.ID)
+			hc := ensureBackendHealthCheck(m, be)
 			path := "/"
 			if len(fields) >= 4 {
 				path = fields[3]
 			}
-			be.HealthCheckID = hcID
-			m.HealthChecks = append(m.HealthChecks, ir.HealthCheck{ID: hcID, Type: "http", Path: path, ExpectedStatus: []int{200}, IntervalMS: 2000, TimeoutMS: 1000, Rise: 2, Fall: 3})
+			hc.Type = "http"
+			hc.Path = path
+			hc.ExpectedStatus = []int{200}
 		}
 	case "server":
 		if len(fields) < 3 {
@@ -157,9 +158,78 @@ func parseHAProxyBackendLine(m *ir.Model, be *ir.Backend, fields []string) {
 				}
 			}
 		}
+		if hasHAProxyCheckOptions(fields) {
+			applyHAProxyServerCheckOptions(m, be, fields)
+		}
 		m.Servers = append(m.Servers, srv)
 		be.Servers = appendUnique(be.Servers, srv.ID)
 	}
+}
+
+func applyHAProxyServerCheckOptions(m *ir.Model, be *ir.Backend, fields []string) {
+	hc := ensureBackendHealthCheck(m, be)
+	for i := 3; i < len(fields)-1; i++ {
+		switch fields[i] {
+		case "inter":
+			if ms, ok := parseDurationMillis(fields[i+1]); ok {
+				hc.IntervalMS = ms
+			}
+		case "rise":
+			if n, err := strconv.Atoi(fields[i+1]); err == nil {
+				hc.Rise = n
+			}
+		case "fall":
+			if n, err := strconv.Atoi(fields[i+1]); err == nil {
+				hc.Fall = n
+			}
+		}
+	}
+}
+
+func ensureBackendHealthCheck(m *ir.Model, be *ir.Backend) *ir.HealthCheck {
+	if be.HealthCheckID == "" {
+		be.HealthCheckID = normalizeID("hc", be.ID)
+	}
+	for i := range m.HealthChecks {
+		if m.HealthChecks[i].ID == be.HealthCheckID {
+			return &m.HealthChecks[i]
+		}
+	}
+	m.HealthChecks = append(m.HealthChecks, ir.HealthCheck{ID: be.HealthCheckID, Type: "tcp", IntervalMS: 2000, TimeoutMS: 1000, Rise: 2, Fall: 3})
+	return &m.HealthChecks[len(m.HealthChecks)-1]
+}
+
+func parseDurationMillis(value string) (int, bool) {
+	if value == "" {
+		return 0, false
+	}
+	multiplier := 1
+	raw := value
+	switch {
+	case strings.HasSuffix(value, "ms"):
+		multiplier = 1
+		raw = strings.TrimSuffix(value, "ms")
+	case strings.HasSuffix(value, "s"):
+		multiplier = 1000
+		raw = strings.TrimSuffix(value, "s")
+	case strings.HasSuffix(value, "m"):
+		multiplier = 60 * 1000
+		raw = strings.TrimSuffix(value, "m")
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, false
+	}
+	return n * multiplier, true
+}
+
+func hasHAProxyCheckOptions(fields []string) bool {
+	for _, field := range fields {
+		if field == "inter" || field == "rise" || field == "fall" {
+			return true
+		}
+	}
+	return false
 }
 
 func splitHostPort(v string) (string, int) {

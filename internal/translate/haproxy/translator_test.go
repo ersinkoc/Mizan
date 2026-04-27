@@ -18,7 +18,7 @@ func TestGenerateHAProxy(t *testing.T) {
 		"backend app",
 		"balance leastconn",
 		"option httpchk GET /healthz",
-		"server app1 10.0.0.1:8080 weight 100 check maxconn 500",
+		"server app1 10.0.0.1:8080 weight 100 check inter 1500ms rise 4 fall 2 maxconn 500",
 	} {
 		if !strings.Contains(result.Config, want) {
 			t.Fatalf("generated config missing %q:\n%s", want, result.Config)
@@ -38,6 +38,9 @@ func TestHelpers(t *testing.T) {
 	}
 	if haproxyAlgorithm("source") != "source" || haproxyAlgorithm("least_conn") != "leastconn" || haproxyAlgorithm("") != "roundrobin" {
 		t.Fatal("haproxyAlgorithm unexpected")
+	}
+	if haproxyDuration(2000) != "2s" || haproxyDuration(1500) != "1500ms" {
+		t.Fatal("haproxyDuration unexpected")
 	}
 	if predicate(ir.Predicate{Type: "host", Value: "example.com"}) != "hdr(host) -i example.com" {
 		t.Fatal("host predicate unexpected")
@@ -108,7 +111,7 @@ func sampleModel() *ir.Model {
 			Action:    ir.RuleAction{Type: "use_backend", BackendID: "be_api"},
 		}},
 		TLSProfiles:  []ir.TLSProfile{{ID: "tls_default", CertPath: "/etc/ssl/edge.pem", ALPN: []string{"h2", "http/1.1"}}},
-		HealthChecks: []ir.HealthCheck{{ID: "hc_default", Type: "http", Path: "/healthz"}},
+		HealthChecks: []ir.HealthCheck{{ID: "hc_default", Type: "http", Path: "/healthz", IntervalMS: 1500, Rise: 4, Fall: 2}},
 		OpaqueBlocks: []ir.OpaqueBlock{{Section: "backend be_app", Lines: []string{"option redispatch"}}},
 	}
 }

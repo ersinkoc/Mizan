@@ -20,6 +20,7 @@ type Target struct {
 	Engine          ir.Engine `json:"engine"`
 	ConfigPath      string    `json:"config_path"`
 	ReloadCommand   string    `json:"reload_command"`
+	RollbackCommand string    `json:"rollback_command,omitempty"`
 	Sudo            bool      `json:"sudo"`
 	PostReloadProbe string    `json:"post_reload_probe,omitempty"`
 	MonitorEndpoint string    `json:"monitor_endpoint,omitempty"`
@@ -28,13 +29,14 @@ type Target struct {
 }
 
 type Cluster struct {
-	ID            string    `json:"id"`
-	Name          string    `json:"name"`
-	TargetIDs     []string  `json:"target_ids"`
-	Parallelism   int       `json:"parallelism"`
-	GateOnFailure bool      `json:"gate_on_failure"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	ID                string    `json:"id"`
+	Name              string    `json:"name"`
+	TargetIDs         []string  `json:"target_ids"`
+	Parallelism       int       `json:"parallelism"`
+	GateOnFailure     bool      `json:"gate_on_failure"`
+	RequiredApprovals int       `json:"required_approvals,omitempty"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
 }
 
 type TargetsFile struct {
@@ -141,6 +143,9 @@ func (s *Store) UpsertCluster(ctx context.Context, projectID string, cluster Clu
 	}
 	if cluster.Parallelism <= 0 {
 		cluster.Parallelism = 1
+	}
+	if cluster.RequiredApprovals < 0 {
+		return Cluster{}, errors.New("cluster required approvals must be non-negative")
 	}
 	targets, err := s.readTargets(projectID)
 	if err != nil {

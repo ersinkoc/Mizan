@@ -1,8 +1,11 @@
 package cli
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -75,6 +78,10 @@ func TestServeAuthConfiguration(t *testing.T) {
 		t.Fatal(err)
 	}
 	stdout.Reset()
+	if err := Run(context.Background(), []string{"serve", "--home", t.TempDir(), "--max-body-bytes", "1024", "--shutdown-timeout", "1s"}, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
 	if err := Run(context.Background(), []string{"serve", "--home", t.TempDir(), "--auth-basic", "bad"}, &stdout, &stderr); err == nil {
 		t.Fatal("expected bad basic credential error")
 	}
@@ -131,10 +138,10 @@ func TestProjectGenerateValidateAndSnapshotCommands(t *testing.T) {
 		t.Fatal(err)
 	}
 	stdout.Reset()
-	if err := Run(context.Background(), []string{"target", "add", "--home", home, "--project", created.Project.ID, "--id", target.ID, "--name", "edge-01b", "--host", "lb1.example.com", "--engine", "nginx", "--config-path", "/etc/nginx/nginx.conf", "--reload-command", "systemctl reload nginx", "--monitor-endpoint", statusServer.URL}, &stdout, &stderr); err != nil {
+	if err := Run(context.Background(), []string{"target", "add", "--home", home, "--project", created.Project.ID, "--id", target.ID, "--name", "edge-01b", "--host", "lb1.example.com", "--engine", "nginx", "--config-path", "/etc/nginx/nginx.conf", "--reload-command", "systemctl reload nginx", "--rollback-command", "cp /etc/nginx/nginx.conf.bak /etc/nginx/nginx.conf && systemctl reload nginx", "--monitor-endpoint", statusServer.URL}, &stdout, &stderr); err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(stdout.Bytes(), []byte("edge-01b")) {
+	if !bytes.Contains(stdout.Bytes(), []byte("edge-01b")) || !bytes.Contains(stdout.Bytes(), []byte("rollback_command")) {
 		t.Fatalf("target update output unexpected: %s", stdout.String())
 	}
 	stdout.Reset()
@@ -160,12 +167,54 @@ func TestProjectGenerateValidateAndSnapshotCommands(t *testing.T) {
 		t.Fatalf("project export file unexpected data=%q err=%v", string(data), err)
 	}
 	stdout.Reset()
-	if err := Run(context.Background(), []string{"cluster", "add", "--home", home, "--project", created.Project.ID, "--name", "prod", "--target-ids", target.ID, "--parallelism", "2"}, &stdout, &stderr); err != nil {
+	if err := Run(context.Background(), []string{"cluster", "add", "--home", home, "--project", created.Project.ID, "--name", "prod", "--target-ids", target.ID, "--parallelism", "2", "--required-approvals", "2"}, &stdout, &stderr); err != nil {
 		t.Fatal(err)
 	}
 	var cluster store.Cluster
 	if err := json.Unmarshal(stdout.Bytes(), &cluster); err != nil {
 		t.Fatal(err)
+	}
+	if cluster.RequiredApprovals != 2 {
+		t.Fatalf("expected required approvals in cluster: %+v", cluster)
+	}
+	stdout.Reset()
+	if err := Run(context.Background(), []string{"approval", "request", "--home", home, "--project", created.Project.ID, "--cluster-id", cluster.ID, "--batch", "1"}, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	var approval store.ApprovalRequest
+	if err := json.Unmarshal(stdout.Bytes(), &approval); err != nil {
+		t.Fatal(err)
+	}
+	if approval.Status != store.ApprovalStatusPending || approval.RequiredApprovals != 2 || approval.ClusterID != cluster.ID || approval.Batch != 1 {
+		t.Fatalf("approval request output unexpected: %+v", approval)
+	}
+	stdout.Reset()
+	if err := Run(context.Background(), []string{"approval", "list", "--home", home, "--project", created.Project.ID}, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(stdout.Bytes(), []byte(approval.ID)) {
+		t.Fatalf("approval list output unexpected: %s", stdout.String())
+	}
+	stdout.Reset()
+	if err := Run(context.Background(), []string{"approval", "approve", "--home", home, "--project", created.Project.ID, "--actor", "alice", approval.ID}, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(stdout.Bytes(), []byte(`"status":"pending"`)) {
+		t.Fatalf("first approval output unexpected: %s", stdout.String())
+	}
+	stdout.Reset()
+	if err := Run(context.Background(), []string{"approval", "approve", "--home", home, "--project", created.Project.ID, "--actor", "bob", approval.ID}, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(stdout.Bytes(), []byte(`"status":"approved"`)) || !bytes.Contains(stdout.Bytes(), []byte("bob")) {
+		t.Fatalf("second approval output unexpected: %s", stdout.String())
+	}
+	stdout.Reset()
+	if err := Run(context.Background(), []string{"project", "export", "--home", home, created.Project.ID}, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(stdout.Bytes(), []byte(`"approvals"`)) || !bytes.Contains(stdout.Bytes(), []byte(approval.ID)) {
+		t.Fatalf("project export approval output unexpected: %s", stdout.String())
 	}
 	stdout.Reset()
 	if err := Run(context.Background(), []string{"cluster", "add", "--home", home, "--project", created.Project.ID, "--id", cluster.ID, "--name", "prod-b", "--target-ids", target.ID, "--gate-on-failure=false"}, &stdout, &stderr); err != nil {
@@ -187,6 +236,12 @@ func TestProjectGenerateValidateAndSnapshotCommands(t *testing.T) {
 	}
 	if !bytes.Contains(stdout.Bytes(), []byte(`"dry_run":true`)) || !bytes.Contains(stdout.Bytes(), []byte(`"target_id":"`+target.ID+`"`)) {
 		t.Fatalf("deploy target output unexpected: %s", stdout.String())
+	}
+	var deployPreview struct {
+		SnapshotHash string `json:"snapshot_hash"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &deployPreview); err != nil {
+		t.Fatal(err)
 	}
 	stdout.Reset()
 	if err := Run(context.Background(), []string{"deploy", "--home", home, "--project", created.Project.ID, "--cluster-id", cluster.ID}, &stdout, &stderr); err != nil {
@@ -215,11 +270,18 @@ func TestProjectGenerateValidateAndSnapshotCommands(t *testing.T) {
 		t.Fatal(err)
 	}
 	stdout.Reset()
-	if err := Run(context.Background(), []string{"deploy", "--home", home, "--project", created.Project.ID, "--target-id", target.ID, "--execute", "--vault-passphrase", "vault-pass"}, &stdout, &stderr); err != nil {
+	if err := Run(context.Background(), []string{"deploy", "--home", home, "--project", created.Project.ID, "--target-id", target.ID, "--execute", "--confirm-snapshot", deployPreview.SnapshotHash, "--vault-passphrase", "vault-pass"}, &stdout, &stderr); err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Contains(stdout.Bytes(), []byte(`"dry_run":false`)) || !bytes.Contains(stdout.Bytes(), []byte(`"status":"success"`)) {
 		t.Fatalf("deploy execute output unexpected: %s", stdout.String())
+	}
+	stdout.Reset()
+	if err := Run(context.Background(), []string{"deploy", "--home", home, "--project", created.Project.ID, "--approval-request-id", approval.ID, "--execute", "--vault-passphrase", "vault-pass"}, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(stdout.Bytes(), []byte(`"cluster_id":"`+cluster.ID+`"`)) || !bytes.Contains(stdout.Bytes(), []byte(`"dry_run":false`)) || !bytes.Contains(stdout.Bytes(), []byte(`"approved_by":["alice","bob"]`)) {
+		t.Fatalf("deploy approval execute output unexpected: %s", stdout.String())
 	}
 	stdout.Reset()
 	if err := Run(context.Background(), []string{"monitor", "snapshot", "--home", home, "--project", created.Project.ID}, &stdout, &stderr); err != nil {
@@ -235,19 +297,33 @@ func TestProjectGenerateValidateAndSnapshotCommands(t *testing.T) {
 	if count := bytes.Count(stdout.Bytes(), []byte(`"project_id"`)); count != 2 {
 		t.Fatalf("monitor stream output count=%d body=%s", count, stdout.String())
 	}
+	stdout.Reset()
+	if err := Run(context.Background(), []string{"doctor", "--home", home, "--json"}, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(stdout.Bytes(), []byte(`"status"`)) || !bytes.Contains(stdout.Bytes(), []byte(`"project_count"`)) {
+		t.Fatalf("doctor json output unexpected: %s", stdout.String())
+	}
+	stdout.Reset()
+	if err := Run(context.Background(), []string{"doctor", "--home", home}, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(stdout.Bytes(), []byte("Mizan doctor:")) {
+		t.Fatalf("doctor text output unexpected: %s", stdout.String())
+	}
 	st := store.New(home)
 	events, err := st.ListAudit(context.Background(), created.Project.ID, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(events) != 3 || events[0].Action != "deploy.run" || events[0].Actor != "cli" {
+	if len(events) < 7 || events[0].Action != "deploy.run" || events[0].Actor != "cli" {
 		t.Fatalf("unexpected deploy audit events: %+v", events)
 	}
 	if got := fmt.Sprint(events[0].Metadata["credentials"]); !strings.Contains(got, "vault") || strings.Contains(got, "PRIVATE KEY") || strings.Contains(got, "vault-user") {
 		t.Fatalf("unexpected deploy credential audit metadata: %v", events[0].Metadata["credentials"])
 	}
 	stdout.Reset()
-	if err := Run(context.Background(), []string{"audit", "show", "--home", home, "--project", created.Project.ID, "--action", "deploy.run", "--actor", "cli", "--outcome", "success", "--from", "2000-01-01T00:00:00Z", "--to", "2100-01-01T00:00:00Z", "--limit", "1"}, &stdout, &stderr); err != nil {
+	if err := Run(context.Background(), []string{"audit", "show", "--home", home, "--project", created.Project.ID, "--action", "deploy.run", "--actor", "cli", "--outcome", "success", "--from", "2000-01-01T00:00:00Z", "--to", "2100-01-01T00:00:00Z", "--dry-run", "true", "--incident", "false", "--limit", "1"}, &stdout, &stderr); err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Contains(stdout.Bytes(), []byte("deploy.run")) {
@@ -365,6 +441,105 @@ func TestSecretCommands(t *testing.T) {
 	}
 }
 
+func TestBackupCommands(t *testing.T) {
+	home := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	if err := Run(context.Background(), []string{"project", "new", "--home", home, "--name", "edge"}, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
+	if err := Run(context.Background(), []string{"secret", "set", "--home", home, "--id", "target_1", "--username", "root", "--vault-passphrase", "pass"}, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	backupPath := filepath.Join(t.TempDir(), "mizan-backup.zip")
+	stdout.Reset()
+	if err := Run(context.Background(), []string{"backup", "create", "--home", home, "--out", backupPath}, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(stdout.Bytes(), []byte(`"format_version":2`)) || !bytes.Contains(stdout.Bytes(), []byte("projects/")) || !bytes.Contains(stdout.Bytes(), []byte("sha256")) {
+		t.Fatalf("backup create output unexpected: %s", stdout.String())
+	}
+	stdout.Reset()
+	if err := Run(context.Background(), []string{"backup", "inspect", "--in", backupPath}, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(stdout.Bytes(), []byte(`"format_version": 2`)) || !bytes.Contains(stdout.Bytes(), []byte("secrets/target_1.json")) || !bytes.Contains(stdout.Bytes(), []byte(`"size"`)) {
+		t.Fatalf("backup inspect output unexpected: %s", stdout.String())
+	}
+	restoreHome := filepath.Join(t.TempDir(), "restored")
+	stdout.Reset()
+	if err := Run(context.Background(), []string{"backup", "restore", "--home", restoreHome, "--in", backupPath}, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(stdout.Bytes(), []byte(`"restored":true`)) {
+		t.Fatalf("backup restore output unexpected: %s", stdout.String())
+	}
+	stdout.Reset()
+	if err := Run(context.Background(), []string{"project", "list", "--home", restoreHome}, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(stdout.Bytes(), []byte("edge")) {
+		t.Fatalf("restored projects unexpected: %s", stdout.String())
+	}
+	stdout.Reset()
+	if err := Run(context.Background(), []string{"secret", "list", "--home", restoreHome}, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(stdout.Bytes(), []byte("target_1")) {
+		t.Fatalf("restored secrets unexpected: %s", stdout.String())
+	}
+
+	stdout.Reset()
+	if err := Run(context.Background(), []string{"backup", "restore", "--home", restoreHome, "--in", backupPath}, &stdout, &stderr); err == nil {
+		t.Fatal("expected restore into non-empty home to fail")
+	}
+	stdout.Reset()
+	if err := Run(context.Background(), []string{"backup", "restore", "--home", restoreHome, "--in", backupPath, "--force"}, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestBackupRestoreRejectsUnsafeArchivePaths(t *testing.T) {
+	restoreHome := filepath.Join(t.TempDir(), "restore")
+	backupPath := filepath.Join(t.TempDir(), "unsafe.zip")
+	writeTestBackup(t, backupPath, backupManifest{
+		FormatVersion: backupManifestVersion,
+		CreatedAt:     time.Now().UTC(),
+		Files: []backupFile{{
+			Path:   "../outside.txt",
+			Size:   int64(len("bad")),
+			SHA256: testSHA256("bad"),
+		}},
+	}, map[string]string{"../outside.txt": "bad"})
+	if _, err := restoreBackup(context.Background(), restoreHome, backupPath, false); err == nil {
+		t.Fatal("expected unsafe path restore error")
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(restoreHome), "outside.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("unsafe restore wrote outside target err=%v", err)
+	}
+}
+
+func TestBackupRestoreRejectsIntegrityMismatch(t *testing.T) {
+	restoreHome := filepath.Join(t.TempDir(), "restore")
+	backupPath := filepath.Join(t.TempDir(), "tampered.zip")
+	writeTestBackup(t, backupPath, backupManifest{
+		FormatVersion: backupManifestVersion,
+		CreatedAt:     time.Now().UTC(),
+		Files: []backupFile{{
+			Path:   "projects/p/config.json",
+			Size:   int64(len("expected")),
+			SHA256: testSHA256("expected"),
+		}},
+	}, map[string]string{"projects/p/config.json": "tampered"})
+
+	if _, err := restoreBackup(context.Background(), restoreHome, backupPath, false); err == nil || !strings.Contains(err.Error(), "integrity") {
+		t.Fatalf("expected integrity restore error, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(restoreHome, "projects", "p", "config.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("tampered restore left a file behind err=%v", err)
+	}
+}
+
 func TestProjectImportAndDelete(t *testing.T) {
 	home := t.TempDir()
 	cfgPath := filepath.Join(t.TempDir(), "haproxy.cfg")
@@ -419,6 +594,8 @@ func TestCLIErrorBranches(t *testing.T) {
 
 	expectErr("serve", "--bad")
 	expectErr("serve", "--home", rootFile)
+	expectErr("serve", "--home", home, "--max-body-bytes", "0")
+	expectErr("serve", "--home", home, "--shutdown-timeout", "0s")
 	expectErr("project")
 	expectErr("project", "new", "--bad")
 	expectErr("project", "new", "--home", home)
@@ -477,6 +654,20 @@ func TestCLIErrorBranches(t *testing.T) {
 	expectErr("cluster", "delete", "--home", home, "--project", "p_1", "missing")
 	expectErr("cluster", "unknown")
 
+	expectErr("approval")
+	expectErr("approval", "list", "--bad")
+	expectErr("approval", "list", "--home", home)
+	expectErr("approval", "list", "--home", rootFile, "--project", "p_1")
+	expectErr("approval", "request", "--bad")
+	expectErr("approval", "request", "--home", home)
+	expectErr("approval", "request", "--home", home, "--project", "missing", "--target-id", "t_1")
+	expectErr("approval", "request", "--home", home, "--project", "missing", "--target-id", "t_1", "--cluster-id", "c_1")
+	expectErr("approval", "request", "--home", home, "--project", "missing", "--cluster-id", "c_1", "--batch", "-1")
+	expectErr("approval", "approve", "--bad")
+	expectErr("approval", "approve", "--home", home)
+	expectErr("approval", "approve", "--home", home, "--project", "missing", "approval")
+	expectErr("approval", "unknown")
+
 	expectErr("generate", "--bad")
 	expectErr("generate", "--home", home)
 	expectErr("generate", "--home", home, "--project", "missing")
@@ -487,6 +678,8 @@ func TestCLIErrorBranches(t *testing.T) {
 	expectErr("deploy", "--home", home)
 	expectErr("deploy", "--home", home, "--project", "missing")
 	expectErr("deploy", "--home", home, "--project", "missing", "--target-id", "t_1")
+	expectErr("deploy", "--home", home, "--project", "missing", "--target-id", "t_1", "--execute")
+	expectErr("deploy", "--home", home, "--project", "missing", "--target-id", "t_1", "--batch", "-1")
 	expectErr("audit")
 	expectErr("audit", "show", "--bad")
 	expectErr("audit", "show", "--home", home)
@@ -494,6 +687,10 @@ func TestCLIErrorBranches(t *testing.T) {
 	expectErr("audit", "show", "--home", home, "--project", "p_1", "--from", "bad")
 	expectErr("audit", "show", "--home", home, "--project", "p_1", "--to", "bad")
 	expectErr("audit", "show", "--home", home, "--project", "p_1", "--target-engine", "bad")
+	expectErr("audit", "show", "--home", home, "--project", "p_1", "--batch", "-1")
+	expectErr("audit", "show", "--home", home, "--project", "p_1", "--dry-run", "bad")
+	expectErr("audit", "show", "--home", home, "--project", "p_1", "--incident", "bad")
+	expectErr("audit", "show", "--home", home, "--project", "p_1", "--rollback-failed", "bad")
 	expectErr("audit", "show", "--home", home, "--project", "p_1", "--out", filepath.Join(t.TempDir(), "missing", "audit.json"))
 	expectErr("audit", "unknown")
 	expectErr("secret")
@@ -512,6 +709,21 @@ func TestCLIErrorBranches(t *testing.T) {
 	expectErr("secret", "delete", "--home", home)
 	expectErr("secret", "delete", "--home", home, "--id", "../x")
 	expectErr("secret", "unknown")
+	expectErr("backup")
+	expectErr("backup", "create", "--bad")
+	expectErr("backup", "create", "--home", rootFile, "--out", filepath.Join(t.TempDir(), "backup.zip"))
+	expectErr("backup", "create", "--home", home)
+	expectErr("backup", "create", "--home", home, "--out", filepath.Join(home, "backup.zip"))
+	expectErr("backup", "create", "--home", home, "--out", filepath.Join(rootFile, "backup.zip"))
+	expectErr("backup", "inspect", "--bad")
+	expectErr("backup", "inspect")
+	expectErr("backup", "inspect", "--in", filepath.Join(t.TempDir(), "missing.zip"))
+	expectErr("backup", "restore", "--bad")
+	expectErr("backup", "restore")
+	expectErr("backup", "restore", "--in", filepath.Join(t.TempDir(), "missing.zip"), "--home", filepath.Join(t.TempDir(), "restore"))
+	expectErr("backup", "unknown")
+	expectErr("doctor", "--bad")
+	expectErr("doctor", "--home", rootFile)
 	expectErr("monitor")
 	expectErr("monitor", "snapshot", "--bad")
 	expectErr("monitor", "snapshot", "--home", home)
@@ -584,11 +796,19 @@ func TestCLIErrorBranches(t *testing.T) {
 	if err := os.Remove(targetsPath); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.New(home).AppendAudit(context.Background(), store.AuditEvent{ProjectID: created.Project.ID, Actor: "cli", Action: "target.probe", Outcome: "failed", TargetEngine: "nginx", ErrorMessage: "probe failed"}); err != nil {
+	if err := store.New(home).AppendAudit(context.Background(), store.AuditEvent{
+		ProjectID:    created.Project.ID,
+		Actor:        "cli",
+		Action:       "target.probe",
+		Outcome:      "failed",
+		TargetEngine: "nginx",
+		ErrorMessage: "probe failed",
+		Metadata:     map[string]any{"target_id": "t_probe", "cluster_id": "c_probe", "approval_request_id": "a_probe", "batch": 2, "dry_run": true, "rollback": map[string]any{"failed": 1}},
+	}); err != nil {
 		t.Fatal(err)
 	}
 	stdout.Reset()
-	if err := Run(context.Background(), []string{"audit", "show", "--home", home, "--project", created.Project.ID, "--target-engine", "nginx", "--csv"}, &stdout, &stderr); err != nil {
+	if err := Run(context.Background(), []string{"audit", "show", "--home", home, "--project", created.Project.ID, "--target-engine", "nginx", "--action-prefix", "target.", "--target-id", "t_probe", "--cluster-id", "c_probe", "--approval-request-id", "a_probe", "--batch", "2", "--dry-run", "true", "--incident", "true", "--rollback-failed", "true", "--csv"}, &stdout, &stderr); err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Contains(stdout.Bytes(), []byte("target.probe")) || !bytes.Contains(stdout.Bytes(), []byte("probe failed")) {
@@ -676,6 +896,106 @@ func TestParseEngines(t *testing.T) {
 	if items := splitCSV(" a, ,b "); len(items) != 2 || items[0] != "a" || items[1] != "b" {
 		t.Fatalf("items=%v", items)
 	}
+}
+
+func TestApprovalCLIHelpers(t *testing.T) {
+	request := store.ApprovalRequest{
+		TargetID:     "target-a",
+		SnapshotHash: "hash-a",
+		Status:       store.ApprovalStatusPending,
+		Approvals:    []store.Approval{{Actor: "alice"}},
+	}
+	if _, _, _, _, _, err := applyCLIApprovalRequest("other", "", 0, "", false, request); err == nil || !strings.Contains(err.Error(), "target_id") {
+		t.Fatalf("expected target mismatch error, got %v", err)
+	}
+	if _, _, _, _, _, err := applyCLIApprovalRequest("", "cluster-a", 0, "", false, request); err == nil || !strings.Contains(err.Error(), "cluster_id") {
+		t.Fatalf("expected cluster mismatch error, got %v", err)
+	}
+	if _, _, _, _, _, err := applyCLIApprovalRequest("", "", 2, "", false, request); err == nil || !strings.Contains(err.Error(), "batch") {
+		t.Fatalf("expected batch mismatch error, got %v", err)
+	}
+	if _, _, _, _, _, err := applyCLIApprovalRequest("", "", 0, "hash-b", false, request); err == nil || !strings.Contains(err.Error(), "snapshot_hash") {
+		t.Fatalf("expected snapshot mismatch error, got %v", err)
+	}
+	if _, _, _, _, _, err := applyCLIApprovalRequest("", "", 0, "", true, request); err == nil || !strings.Contains(err.Error(), "not fully approved") {
+		t.Fatalf("expected pending approval execute error, got %v", err)
+	}
+	request.Status = store.ApprovalStatusApproved
+	targetID, clusterID, batch, snapshot, actors, err := applyCLIApprovalRequest("", "", 0, "", true, request)
+	if err != nil || targetID != "target-a" || clusterID != "" || batch != 0 || snapshot != "hash-a" || len(actors) != 1 || actors[0] != "alice" {
+		t.Fatalf("unexpected approved helper result target=%q cluster=%q batch=%d snapshot=%q actors=%v err=%v", targetID, clusterID, batch, snapshot, actors, err)
+	}
+
+	targets := store.TargetsFile{
+		Targets: []store.Target{{ID: "target-a"}},
+		Clusters: []store.Cluster{
+			{ID: "cluster-a", RequiredApprovals: 2},
+			{ID: "cluster-b", RequiredApprovals: -1},
+		},
+	}
+	if got, err := approvalPolicyFromTargets(targets, "target-a", ""); err != nil || got != 0 {
+		t.Fatalf("target approval policy got=%d err=%v", got, err)
+	}
+	if got, err := approvalPolicyFromTargets(targets, "", "cluster-a"); err != nil || got != 2 {
+		t.Fatalf("cluster approval policy got=%d err=%v", got, err)
+	}
+	for _, tc := range []struct {
+		targetID  string
+		clusterID string
+		want      string
+	}{
+		{"", "", "target_id or cluster_id"},
+		{"target-a", "cluster-a", "exactly one"},
+		{"missing", "", "target not found"},
+		{"", "cluster-b", "non-negative"},
+		{"", "missing", "cluster not found"},
+	} {
+		if _, err := approvalPolicyFromTargets(targets, tc.targetID, tc.clusterID); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Fatalf("approval policy target=%q cluster=%q expected %q, got %v", tc.targetID, tc.clusterID, tc.want, err)
+		}
+	}
+}
+
+func writeTestBackup(t *testing.T, path string, manifest backupManifest, entries map[string]string) {
+	t.Helper()
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zw := zip.NewWriter(f)
+	for name, body := range entries {
+		w, err := zw.Create(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.Write([]byte(body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if manifest.FormatVersion != 0 {
+		data, err := json.Marshal(manifest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		w, err := zw.Create(backupManifestPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.Write(data); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func testSHA256(body string) string {
+	sum := sha256.Sum256([]byte(body))
+	return hex.EncodeToString(sum[:])
 }
 
 type errWriter struct{}

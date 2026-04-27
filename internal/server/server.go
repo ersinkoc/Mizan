@@ -15,9 +15,12 @@ import (
 )
 
 type Config struct {
-	Bind string
-	Auth AuthConfig
+	Bind         string
+	Auth         AuthConfig
+	MaxBodyBytes int64
 }
+
+const DefaultMaxBodyBytes int64 = 10 << 20
 
 type AuthConfig struct {
 	Token         string
@@ -60,6 +63,9 @@ func New(cfg Config, st *store.Store, log *slog.Logger) *http.Server {
 	if cfg.Bind == "" {
 		cfg.Bind = "127.0.0.1:7890"
 	}
+	if cfg.MaxBodyBytes <= 0 {
+		cfg.MaxBodyBytes = DefaultMaxBodyBytes
+	}
 	mux := http.NewServeMux()
 	api.Register(mux, st)
 	mux.Handle("/", embeddedUI())
@@ -68,11 +74,52 @@ func New(cfg Config, st *store.Store, log *slog.Logger) *http.Server {
 	if cfg.Auth.Enabled() {
 		handler = authenticator(cfg.Auth, handler)
 	}
+	handler = limitRequestBody(cfg.MaxBodyBytes, handler)
+	handler = securityHeaders(handler)
 	return &http.Server{
 		Addr:              cfg.Bind,
 		Handler:           recoverer(logger(log, handler)),
 		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    1 << 20,
 	}
+}
+
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Referrer-Policy", "no-referrer")
+		h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+		h.Set("Content-Security-Policy", "default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
+		if isDynamicPath(r.URL.Path) {
+			h.Set("Cache-Control", "no-store")
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func isDynamicPath(path string) bool {
+	return strings.HasPrefix(path, "/api/") ||
+		path == "/healthz" ||
+		path == "/readyz" ||
+		path == "/metrics" ||
+		path == "/version"
+}
+
+func limitRequestBody(maxBodyBytes int64, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Body != nil && r.ContentLength != 0 {
+			if r.ContentLength > maxBodyBytes {
+				http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+				return
+			}
+			r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func authenticator(cfg AuthConfig, next http.Handler) http.Handler {

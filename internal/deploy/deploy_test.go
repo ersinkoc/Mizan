@@ -70,7 +70,11 @@ func TestRunExecutesAndHandlesFailures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cluster, err := st.UpsertCluster(t.Context(), meta.ID, store.Cluster{Name: "prod", TargetIDs: []string{first.ID, second.ID}, Parallelism: 1, GateOnFailure: false})
+	cluster, err := st.UpsertCluster(t.Context(), meta.ID, store.Cluster{Name: "prod", TargetIDs: []string{first.ID, second.ID}, Parallelism: 1, GateOnFailure: false, RequiredApprovals: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, snapshot, err := st.GetIR(t.Context(), meta.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,12 +98,18 @@ func TestRunExecutesAndHandlesFailures(t *testing.T) {
 			return secrets.Secret{Username: "vault-" + target.Name}, nil
 		},
 	}
-	result, err := deployer.Run(t.Context(), st, Request{ProjectID: meta.ID, ClusterID: cluster.ID})
+	if _, err := deployer.Run(t.Context(), st, Request{ProjectID: meta.ID, ClusterID: cluster.ID, ConfirmSnapshotHash: snapshot, ApprovedBy: []string{"alice"}}); err == nil || !strings.Contains(err.Error(), "approval") {
+		t.Fatalf("expected approval gate error, got %v", err)
+	}
+	result, err := deployer.Run(t.Context(), st, Request{ProjectID: meta.ID, ClusterID: cluster.ID, ConfirmSnapshotHash: snapshot, ApprovedBy: []string{"alice", "bob", "Alice"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Status != "failed" || len(result.Steps) < 9 {
+	if result.Status != "failed" || len(result.Steps) < 9 || result.RequiredApprovals != 2 || strings.Join(result.ApprovedBy, ",") != "alice,bob" {
 		t.Fatalf("expected failed result that continues to second target: %+v", result)
+	}
+	if result.Rollback.Planned != 0 || result.Rollback.Attempted != 0 {
+		t.Fatalf("unexpected rollback stats without rollback command: %+v", result.Rollback)
 	}
 	if len(ran) < 8 || !strings.Contains(strings.Join(ran, "\n"), "vault-second") || result.Steps[1].Credential != "vault" || !strings.Contains(result.Steps[len(result.Steps)-2].Command, "sudo sh -lc") {
 		t.Fatalf("runner commands not recorded as expected: steps=%+v ran=%v", result.Steps, ran)
@@ -110,7 +120,7 @@ func TestRunExecutesAndHandlesFailures(t *testing.T) {
 		t.Fatal(err)
 	}
 	ran = nil
-	result, err = deployer.Run(t.Context(), st, Request{ProjectID: meta.ID, ClusterID: gated.ID})
+	result, err = deployer.Run(t.Context(), st, Request{ProjectID: meta.ID, ClusterID: gated.ID, ConfirmSnapshotHash: snapshot})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +131,7 @@ func TestRunExecutesAndHandlesFailures(t *testing.T) {
 	deployer.Credentials = func(context.Context, store.Target) (secrets.Secret, error) {
 		return secrets.Secret{}, errors.New("vault failed")
 	}
-	result, err = deployer.Run(t.Context(), st, Request{ProjectID: meta.ID, TargetID: first.ID})
+	result, err = deployer.Run(t.Context(), st, Request{ProjectID: meta.ID, TargetID: first.ID, ConfirmSnapshotHash: snapshot})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,12 +144,90 @@ func TestRunExecutesAndHandlesFailures(t *testing.T) {
 		}
 		return secrets.Secret{}, nil
 	}
-	result, err = deployer.Run(t.Context(), st, Request{ProjectID: meta.ID, ClusterID: cluster.ID})
+	result, err = deployer.Run(t.Context(), st, Request{ProjectID: meta.ID, ClusterID: cluster.ID, ConfirmSnapshotHash: snapshot, ApprovedBy: []string{"alice,bob"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if result.Status != "failed" || len(result.Steps) <= 1 || result.Steps[0].Stage != "credentials" {
 		t.Fatalf("expected credential failure to continue in ungated cluster: %+v", result)
+	}
+}
+
+func TestRunClusterBatchSelection(t *testing.T) {
+	st := store.New(t.TempDir())
+	meta, _, _, err := st.CreateProject(t.Context(), "edge", "", []ir.Engine{ir.EngineHAProxy})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	for _, name := range []string{"first", "second", "third"} {
+		target, err := st.UpsertTarget(t.Context(), meta.ID, store.Target{Name: name, Host: name + ".example.com", Engine: ir.EngineHAProxy})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, target.ID)
+	}
+	cluster, err := st.UpsertCluster(t.Context(), meta.ID, store.Cluster{Name: "prod", TargetIDs: ids, Parallelism: 2, GateOnFailure: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := (Deployer{}).Run(t.Context(), st, Request{ProjectID: meta.ID, ClusterID: cluster.ID, DryRun: true, Batch: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Batch != 2 || len(result.Steps) != 6 || result.Steps[0].TargetName != "third" || result.Steps[0].Batch != 2 {
+		t.Fatalf("unexpected batch result: %+v", result)
+	}
+	if _, err := (Deployer{}).Run(t.Context(), st, Request{ProjectID: meta.ID, ClusterID: cluster.ID, DryRun: true, Batch: 3}); err == nil || !strings.Contains(err.Error(), "batch 3") {
+		t.Fatalf("expected empty batch error, got %v", err)
+	}
+	if _, err := (Deployer{}).Run(t.Context(), st, Request{ProjectID: meta.ID, ClusterID: cluster.ID, DryRun: true, Batch: -1}); err == nil || !strings.Contains(err.Error(), "batch") {
+		t.Fatalf("expected negative batch error, got %v", err)
+	}
+}
+
+func TestRunExecuteRecordsRollbackSummary(t *testing.T) {
+	st := store.New(t.TempDir())
+	meta, _, _, err := st.CreateProject(t.Context(), "edge", "", []ir.Engine{ir.EngineHAProxy})
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := st.UpsertTarget(t.Context(), meta.ID, store.Target{
+		Name:            "edge",
+		Host:            "edge.example.com",
+		Engine:          ir.EngineHAProxy,
+		RollbackCommand: "cp /etc/haproxy/haproxy.cfg.bak /etc/haproxy/haproxy.cfg && systemctl reload haproxy",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, snapshot, err := st.GetIR(t.Context(), meta.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var commands []string
+	deployer := Deployer{
+		Runner: func(_ context.Context, _ store.Target, _ secrets.Secret, command string, _ string) (string, error) {
+			commands = append(commands, command)
+			if strings.Contains(command, "install -m") {
+				return "install failed", errors.New("exit 1")
+			}
+			if strings.Contains(command, "cp /etc/haproxy") {
+				return "rollback failed", errors.New("exit 2")
+			}
+			return "ok", nil
+		},
+		Prober: func(context.Context, string) error { return nil },
+	}
+	result, err := deployer.Run(t.Context(), st, Request{ProjectID: meta.ID, TargetID: target.ID, ConfirmSnapshotHash: snapshot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "failed" || result.Rollback.Planned != 1 || result.Rollback.Attempted != 1 || result.Rollback.Failed != 1 || result.Rollback.Succeeded != 0 {
+		t.Fatalf("unexpected rollback summary result=%+v", result)
+	}
+	if !strings.Contains(strings.Join(commands, "\n"), "cp /etc/haproxy") {
+		t.Fatalf("rollback command was not executed: %v", commands)
 	}
 }
 
@@ -165,10 +253,20 @@ func TestRunErrorsAndSelectionBranches(t *testing.T) {
 	if _, err := deployer.Run(t.Context(), st, Request{ProjectID: meta.ID, ClusterID: "missing"}); err == nil {
 		t.Fatal("expected missing cluster error")
 	}
+	target, err := st.UpsertTarget(t.Context(), meta.ID, store.Target{Name: "edge", Host: "localhost", Engine: ir.EngineHAProxy})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := deployer.Run(t.Context(), st, Request{ProjectID: meta.ID, TargetID: target.ID}); err == nil || !strings.Contains(err.Error(), "confirm_snapshot_hash") {
+		t.Fatalf("expected execute confirmation error, got %v", err)
+	}
+	if _, err := deployer.Run(t.Context(), st, Request{ProjectID: meta.ID, TargetID: target.ID, ClusterID: "also-set", DryRun: true}); err == nil || !strings.Contains(err.Error(), "exactly one") {
+		t.Fatalf("expected target/cluster exclusivity error, got %v", err)
+	}
 	if err := os.WriteFile(filepath.Join(st.Root(), "projects", meta.ID, "targets.json"), []byte("{"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := deployer.Run(t.Context(), st, Request{ProjectID: meta.ID, TargetID: "missing"}); err == nil {
+	if _, err := deployer.Run(t.Context(), st, Request{ProjectID: meta.ID, TargetID: "missing", DryRun: true}); err == nil {
 		t.Fatal("expected list targets error")
 	}
 
@@ -180,15 +278,15 @@ func TestRunErrorsAndSelectionBranches(t *testing.T) {
 			{ID: "ok", TargetIDs: []string{"t_1"}, Parallelism: 0},
 		},
 	}
-	if _, _, _, err := selectTargets(file, Request{ClusterID: "empty"}); err == nil {
+	if _, _, _, _, err := selectTargets(file, Request{ClusterID: "empty"}); err == nil {
 		t.Fatal("expected empty cluster error")
 	}
-	if _, _, _, err := selectTargets(file, Request{ClusterID: "bad"}); err == nil {
+	if _, _, _, _, err := selectTargets(file, Request{ClusterID: "bad"}); err == nil {
 		t.Fatal("expected missing cluster target error")
 	}
-	selected, parallelism, gate, err := selectTargets(file, Request{ClusterID: "ok"})
-	if err != nil || len(selected) != 1 || parallelism != 1 || gate {
-		t.Fatalf("unexpected selection: selected=%+v parallelism=%d gate=%t err=%v", selected, parallelism, gate, err)
+	selected, parallelism, gate, requiredApprovals, err := selectTargets(file, Request{ClusterID: "ok"})
+	if err != nil || len(selected) != 1 || parallelism != 1 || gate || requiredApprovals != 0 {
+		t.Fatalf("unexpected selection: selected=%+v parallelism=%d gate=%t approvals=%d err=%v", selected, parallelism, gate, requiredApprovals, err)
 	}
 }
 
@@ -239,6 +337,68 @@ func TestRunTargetErrorAndProbeBranches(t *testing.T) {
 	}
 }
 
+func TestRunTargetRollbackHook(t *testing.T) {
+	var commands []string
+	deployer := Deployer{
+		Runner: func(_ context.Context, _ store.Target, _ secrets.Secret, command string, _ string) (string, error) {
+			commands = append(commands, command)
+			if strings.Contains(command, "cp /etc/haproxy") {
+				return "rollback ok", nil
+			}
+			if strings.Contains(command, "reload") {
+				return "reload failed", errors.New("exit 1")
+			}
+			return "ok", nil
+		},
+		Prober: func(context.Context, string) error { return nil },
+	}
+	model := ir.EmptyModel("p_1", "edge", "", []ir.Engine{ir.EngineHAProxy})
+	target := store.Target{
+		ID:              "t_1",
+		Name:            "edge",
+		Engine:          ir.EngineHAProxy,
+		Host:            "host",
+		Port:            22,
+		User:            "root",
+		ConfigPath:      "/etc/haproxy/haproxy.cfg",
+		ReloadCommand:   "systemctl reload haproxy",
+		RollbackCommand: "cp /etc/haproxy/haproxy.cfg.bak /etc/haproxy/haproxy.cfg && systemctl reload haproxy",
+		Sudo:            true,
+	}
+	steps := deployer.runTarget(t.Context(), model, "p_1", target, secrets.Secret{}, 1, false)
+	if len(steps) < 2 || steps[len(steps)-1].Stage != "rollback" || steps[len(steps)-1].Status != "success" {
+		t.Fatalf("expected successful rollback after reload failure: %+v", steps)
+	}
+	if !strings.Contains(steps[len(steps)-1].Command, "sudo sh -lc") || !strings.Contains(strings.Join(commands, "\n"), "cp /etc/haproxy") {
+		t.Fatalf("rollback command was not executed with sudo: steps=%+v commands=%v", steps, commands)
+	}
+
+	steps = deployer.runTarget(t.Context(), model, "p_1", target, secrets.Secret{}, 1, true)
+	if steps[len(steps)-2].Stage != "rollback" || steps[len(steps)-2].Status != "skipped" {
+		t.Fatalf("expected dry-run rollback plan before cleanup: %+v", steps)
+	}
+	if stats := RollbackSummary(steps); stats.Planned != 1 || stats.Attempted != 0 || stats.Succeeded != 0 || stats.Failed != 0 {
+		t.Fatalf("unexpected dry-run rollback summary: %+v", stats)
+	}
+
+	deployer.Runner = func(_ context.Context, _ store.Target, _ secrets.Secret, command string, _ string) (string, error) {
+		if strings.Contains(command, "reload") {
+			return "reload failed", errors.New("exit 1")
+		}
+		if strings.Contains(command, "cp /etc/haproxy") {
+			return "rollback failed", errors.New("exit 2")
+		}
+		return "ok", nil
+	}
+	steps = deployer.runTarget(t.Context(), model, "p_1", target, secrets.Secret{}, 1, false)
+	if steps[len(steps)-1].Stage != "rollback" || steps[len(steps)-1].Status != "failed" {
+		t.Fatalf("expected failed rollback step: %+v", steps)
+	}
+	if stats := RollbackSummary(steps); stats.Planned != 1 || stats.Attempted != 1 || stats.Failed != 1 {
+		t.Fatalf("unexpected failed rollback summary: %+v", stats)
+	}
+}
+
 func TestRunTargetCleanupFailure(t *testing.T) {
 	deployer := Deployer{
 		Runner: func(_ context.Context, _ store.Target, _ secrets.Secret, command string, _ string) (string, error) {
@@ -285,6 +445,15 @@ func TestCommandsAndHelpers(t *testing.T) {
 	sources := CredentialSources([]Step{{Credential: ""}, {Credential: "vault"}, {Credential: "vault"}, {Credential: "local_ssh"}})
 	if strings.Join(sources, ",") != "vault,local_ssh" {
 		t.Fatalf("unexpected credential sources: %v", sources)
+	}
+	rollbackStats := RollbackSummary([]Step{
+		{Stage: "rollback", Status: "skipped"},
+		{Stage: "rollback", Status: "success"},
+		{Stage: "rollback", Status: "failed"},
+		{Stage: "cleanup", Status: "success"},
+	})
+	if rollbackStats.Planned != 3 || rollbackStats.Attempted != 2 || rollbackStats.Succeeded != 1 || rollbackStats.Failed != 1 {
+		t.Fatalf("unexpected rollback stats: %+v", rollbackStats)
 	}
 }
 

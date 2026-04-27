@@ -1,8 +1,11 @@
 package cli
 
 import (
+	"archive/zip"
 	"context"
+	"crypto/sha256"
 	"encoding/csv"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -13,11 +16,13 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/mizanproxy/mizan/internal/deploy"
+	"github.com/mizanproxy/mizan/internal/doctor"
 	"github.com/mizanproxy/mizan/internal/ir"
 	"github.com/mizanproxy/mizan/internal/ir/parser"
 	"github.com/mizanproxy/mizan/internal/monitor"
@@ -41,13 +46,30 @@ var (
 	}
 )
 
+const backupManifestPath = ".mizan-backup-manifest.json"
+const backupManifestVersion = 2
+
 type projectExport struct {
-	FormatVersion int               `json:"format_version"`
-	ExportedAt    time.Time         `json:"exported_at"`
-	Project       store.ProjectMeta `json:"project"`
-	IR            *ir.Model         `json:"ir"`
-	Version       string            `json:"version"`
-	Targets       store.TargetsFile `json:"targets"`
+	FormatVersion int                     `json:"format_version"`
+	ExportedAt    time.Time               `json:"exported_at"`
+	Project       store.ProjectMeta       `json:"project"`
+	IR            *ir.Model               `json:"ir"`
+	Version       string                  `json:"version"`
+	Targets       store.TargetsFile       `json:"targets"`
+	Approvals     []store.ApprovalRequest `json:"approvals"`
+}
+
+type backupManifest struct {
+	FormatVersion int          `json:"format_version"`
+	CreatedAt     time.Time    `json:"created_at"`
+	SourceRoot    string       `json:"source_root,omitempty"`
+	Files         []backupFile `json:"files"`
+}
+
+type backupFile struct {
+	Path   string `json:"path"`
+	Size   int64  `json:"size"`
+	SHA256 string `json:"sha256"`
 }
 
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
@@ -74,12 +96,18 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return validateCmd(ctx, args[1:], stdout, stderr)
 	case "deploy":
 		return deployCmd(ctx, args[1:], stdout, stderr)
+	case "approval":
+		return approvalCmd(ctx, args[1:], stdout, stderr)
 	case "monitor":
 		return monitorCmd(ctx, args[1:], stdout, stderr)
 	case "audit":
 		return auditCmd(ctx, args[1:], stdout, stderr)
 	case "secret":
 		return secretCmd(ctx, args[1:], stdout, stderr)
+	case "backup":
+		return backupCmd(ctx, args[1:], stdout, stderr)
+	case "doctor":
+		return doctorCmd(ctx, args[1:], stdout, stderr)
 	default:
 		usage(stderr)
 		return fmt.Errorf("unknown command %q", args[0])
@@ -101,8 +129,16 @@ func serve(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	home := fs.String("home", store.DefaultRoot(), "Mizan data directory")
 	authToken := fs.String("auth-token", "", "bearer token required for HTTP access")
 	authBasic := fs.String("auth-basic", "", "basic auth credential as user:password")
+	maxBodyBytes := fs.Int64("max-body-bytes", server.DefaultMaxBodyBytes, "maximum HTTP request body size in bytes")
+	shutdownTimeout := fs.Duration("shutdown-timeout", 10*time.Second, "graceful shutdown timeout")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if *maxBodyBytes <= 0 {
+		return errors.New("--max-body-bytes must be greater than zero")
+	}
+	if *shutdownTimeout <= 0 {
+		return errors.New("--shutdown-timeout must be positive")
 	}
 	auth := server.AuthConfig{Token: firstNonEmpty(*authToken, os.Getenv("MIZAN_AUTH_TOKEN"))}
 	basic := firstNonEmpty(*authBasic, os.Getenv("MIZAN_AUTH_BASIC"))
@@ -122,12 +158,14 @@ func serve(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if err := st.Bootstrap(ctx); err != nil {
 		return err
 	}
-	srv := server.New(server.Config{Bind: *bind, Auth: auth}, st, log)
+	srv := server.New(server.Config{Bind: *bind, Auth: auth, MaxBodyBytes: *maxBodyBytes}, st, log)
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go func() {
 		<-ctx.Done()
-		_ = srv.Shutdown(context.Background())
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), *shutdownTimeout)
+		defer cancel()
+		_ = srv.Shutdown(shutdownCtx)
 	}()
 	_, _ = fmt.Fprintf(stdout, "Mizan serving http://%s (data: %s)\n", *bind, st.Root())
 	err := listenAndServe(srv)
@@ -260,6 +298,10 @@ func exportProjectPayload(ctx context.Context, st *store.Store, id string) (proj
 	if err != nil {
 		return projectExport{}, err
 	}
+	approvals, err := st.ListApprovalRequests(ctx, id)
+	if err != nil {
+		return projectExport{}, err
+	}
 	return projectExport{
 		FormatVersion: 1,
 		ExportedAt:    time.Now().UTC(),
@@ -267,6 +309,7 @@ func exportProjectPayload(ctx context.Context, st *store.Store, id string) (proj
 		IR:            model,
 		Version:       version,
 		Targets:       targets,
+		Approvals:     approvals,
 	}, nil
 }
 
@@ -398,6 +441,7 @@ func targetCmd(ctx context.Context, args []string, stdout, stderr io.Writer) err
 		engine := fs.String("engine", "haproxy", "haproxy or nginx")
 		configPath := fs.String("config-path", "", "remote config path")
 		reloadCommand := fs.String("reload-command", "", "remote reload command")
+		rollbackCommand := fs.String("rollback-command", "", "optional remote rollback command after failed install/reload/probe")
 		sudo := fs.Bool("sudo", false, "run install/reload through sudo")
 		probe := fs.String("post-reload-probe", "", "optional HTTP probe URL")
 		monitorEndpoint := fs.String("monitor-endpoint", "", "optional runtime monitor endpoint")
@@ -416,6 +460,7 @@ func targetCmd(ctx context.Context, args []string, stdout, stderr io.Writer) err
 			Engine:          ir.Engine(*engine),
 			ConfigPath:      *configPath,
 			ReloadCommand:   *reloadCommand,
+			RollbackCommand: *rollbackCommand,
 			Sudo:            *sudo,
 			PostReloadProbe: *probe,
 			MonitorEndpoint: *monitorEndpoint,
@@ -473,6 +518,7 @@ func clusterCmd(ctx context.Context, args []string, stdout, stderr io.Writer) er
 		targetIDs := fs.String("target-ids", "", "comma-separated target ids")
 		parallelism := fs.Int("parallelism", 1, "deployment parallelism")
 		gate := fs.Bool("gate-on-failure", true, "stop rollout after the first failed target")
+		requiredApprovals := fs.Int("required-approvals", 0, "distinct approval names required before cluster execute")
 		if err := fs.Parse(args[1:]); err != nil {
 			return err
 		}
@@ -480,11 +526,12 @@ func clusterCmd(ctx context.Context, args []string, stdout, stderr io.Writer) er
 			return errors.New("--project is required")
 		}
 		cluster, err := store.New(*home).UpsertCluster(ctx, *projectID, store.Cluster{
-			ID:            *id,
-			Name:          *name,
-			TargetIDs:     splitCSV(*targetIDs),
-			Parallelism:   *parallelism,
-			GateOnFailure: *gate,
+			ID:                *id,
+			Name:              *name,
+			TargetIDs:         splitCSV(*targetIDs),
+			Parallelism:       *parallelism,
+			GateOnFailure:     *gate,
+			RequiredApprovals: *requiredApprovals,
 		})
 		if err != nil {
 			return err
@@ -504,6 +551,122 @@ func clusterCmd(ctx context.Context, args []string, stdout, stderr io.Writer) er
 		return store.New(*home).DeleteCluster(ctx, *projectID, fs.Arg(0))
 	default:
 		return fmt.Errorf("unknown cluster command %q", args[0])
+	}
+}
+
+func approvalCmd(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	if len(args) == 0 {
+		_, _ = fmt.Fprintln(stderr, "usage: mizan approval list|request|approve")
+		return errors.New("missing approval command")
+	}
+	switch args[0] {
+	case "list":
+		fs := flag.NewFlagSet("approval list", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		home := fs.String("home", store.DefaultRoot(), "Mizan data directory")
+		projectID := fs.String("project", "", "project id")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if *projectID == "" {
+			return errors.New("--project is required")
+		}
+		requests, err := store.New(*home).ListApprovalRequests(ctx, *projectID)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(stdout).Encode(requests)
+	case "request":
+		fs := flag.NewFlagSet("approval request", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		home := fs.String("home", store.DefaultRoot(), "Mizan data directory")
+		projectID := fs.String("project", "", "project id")
+		targetID := fs.String("target-id", "", "deployment target id")
+		clusterID := fs.String("cluster-id", "", "deployment cluster id")
+		batch := fs.Int("batch", 0, "cluster batch number; 0 requests approval for all batches")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if *projectID == "" {
+			return errors.New("--project is required")
+		}
+		if (*targetID == "") == (*clusterID == "") {
+			return errors.New("exactly one of --target-id or --cluster-id is required")
+		}
+		if *batch < 0 {
+			return errors.New("--batch must be non-negative")
+		}
+		st := store.New(*home)
+		_, snapshot, err := st.GetIR(ctx, *projectID)
+		if err != nil {
+			return err
+		}
+		targets, err := st.ListTargets(ctx, *projectID)
+		if err != nil {
+			return err
+		}
+		requiredApprovals, err := approvalPolicyFromTargets(targets, *targetID, *clusterID)
+		if err != nil {
+			return err
+		}
+		request, err := st.CreateApprovalRequest(ctx, *projectID, store.ApprovalRequest{
+			TargetID:          *targetID,
+			ClusterID:         *clusterID,
+			SnapshotHash:      snapshot,
+			Batch:             *batch,
+			RequiredApprovals: requiredApprovals,
+		})
+		if err != nil {
+			return err
+		}
+		_ = st.AppendAudit(ctx, store.AuditEvent{
+			ProjectID:      *projectID,
+			Actor:          "cli",
+			Action:         "approval.request",
+			IRSnapshotHash: snapshot,
+			Outcome:        "success",
+			Metadata: map[string]any{
+				"approval_request_id": request.ID,
+				"target_id":           request.TargetID,
+				"cluster_id":          request.ClusterID,
+				"batch":               request.Batch,
+				"required_approvals":  request.RequiredApprovals,
+			},
+		})
+		return json.NewEncoder(stdout).Encode(request)
+	case "approve":
+		fs := flag.NewFlagSet("approval approve", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		home := fs.String("home", store.DefaultRoot(), "Mizan data directory")
+		projectID := fs.String("project", "", "project id")
+		actor := fs.String("actor", "cli", "approval actor name")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if *projectID == "" || fs.NArg() != 1 {
+			return errors.New("--project and approval request id are required")
+		}
+		st := store.New(*home)
+		request, err := st.ApproveRequest(ctx, *projectID, fs.Arg(0), *actor)
+		if err != nil {
+			return err
+		}
+		_ = st.AppendAudit(ctx, store.AuditEvent{
+			ProjectID:      *projectID,
+			Actor:          *actor,
+			Action:         "approval.approve",
+			IRSnapshotHash: request.SnapshotHash,
+			Outcome:        "success",
+			Metadata: map[string]any{
+				"approval_request_id": request.ID,
+				"status":              request.Status,
+				"approvals":           len(request.Approvals),
+				"required_approvals":  request.RequiredApprovals,
+			},
+		})
+		return json.NewEncoder(stdout).Encode(request)
+	default:
+		return fmt.Errorf("unknown approval command %q", args[0])
 	}
 }
 
@@ -565,7 +728,11 @@ func deployCmd(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	projectID := fs.String("project", "", "project id")
 	targetID := fs.String("target-id", "", "deployment target id")
 	clusterID := fs.String("cluster-id", "", "deployment cluster id")
+	approvalRequestID := fs.String("approval-request-id", "", "approval request id to use for snapshot-bound execution")
 	execute := fs.Bool("execute", false, "execute remote SSH commands instead of dry-run planning")
+	confirmSnapshot := fs.String("confirm-snapshot", "", "required snapshot hash when --execute is set")
+	batch := fs.Int("batch", 0, "cluster batch number to deploy; 0 deploys all batches")
+	approvedBy := fs.String("approved-by", "", "comma-separated approval names required by cluster policy")
 	vaultPassphrase := fs.String("vault-passphrase", "", "vault passphrase for target credentials")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -573,19 +740,47 @@ func deployCmd(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	if *projectID == "" {
 		return errors.New("--project is required")
 	}
-	if (*targetID == "") == (*clusterID == "") {
-		return errors.New("exactly one of --target-id or --cluster-id is required")
+	if *approvalRequestID == "" && (*targetID == "") == (*clusterID == "") {
+		return errors.New("exactly one of --target-id, --cluster-id, or --approval-request-id is required")
+	}
+	if *approvalRequestID == "" && *targetID != "" && *clusterID != "" {
+		return errors.New("exactly one of --target-id, --cluster-id, or --approval-request-id is required")
+	}
+	if *execute && *confirmSnapshot == "" && *approvalRequestID == "" {
+		return errors.New("--confirm-snapshot or --approval-request-id is required with --execute; run a dry run first and pass its snapshot_hash")
+	}
+	if *batch < 0 {
+		return errors.New("--batch must be non-negative")
 	}
 	st := store.New(*home)
+	approvedActors := splitCSV(*approvedBy)
+	if *approvalRequestID != "" {
+		request, err := st.GetApprovalRequest(ctx, *projectID, *approvalRequestID)
+		if err != nil {
+			return err
+		}
+		targetIDValue, clusterIDValue, batchValue, confirmSnapshotValue, actors, err := applyCLIApprovalRequest(*targetID, *clusterID, *batch, *confirmSnapshot, *execute, request)
+		if err != nil {
+			return err
+		}
+		*targetID = targetIDValue
+		*clusterID = clusterIDValue
+		*batch = batchValue
+		*confirmSnapshot = confirmSnapshotValue
+		approvedActors = append(approvedActors, actors...)
+	}
 	deployer := deploy.New()
 	if *execute {
 		deployer.Credentials = deployCredentialProvider(*home, vaultPassphraseBytes(*vaultPassphrase))
 	}
 	result, err := deployer.Run(ctx, st, deploy.Request{
-		ProjectID: *projectID,
-		TargetID:  *targetID,
-		ClusterID: *clusterID,
-		DryRun:    !*execute,
+		ProjectID:           *projectID,
+		TargetID:            *targetID,
+		ClusterID:           *clusterID,
+		DryRun:              !*execute,
+		ConfirmSnapshotHash: *confirmSnapshot,
+		Batch:               *batch,
+		ApprovedBy:          approvedActors,
 	})
 	if err != nil {
 		return err
@@ -597,11 +792,16 @@ func deployCmd(ctx context.Context, args []string, stdout, stderr io.Writer) err
 		IRSnapshotHash: result.SnapshotHash,
 		Outcome:        result.Status,
 		Metadata: map[string]any{
-			"dry_run":     result.DryRun,
-			"target_id":   result.TargetID,
-			"cluster_id":  result.ClusterID,
-			"steps":       len(result.Steps),
-			"credentials": deploy.CredentialSources(result.Steps),
+			"dry_run":             result.DryRun,
+			"target_id":           result.TargetID,
+			"cluster_id":          result.ClusterID,
+			"steps":               len(result.Steps),
+			"batch":               result.Batch,
+			"required_approvals":  result.RequiredApprovals,
+			"approved_by":         result.ApprovedBy,
+			"approval_request_id": *approvalRequestID,
+			"rollback":            result.Rollback,
+			"credentials":         deploy.CredentialSources(result.Steps),
 		},
 	})
 	return json.NewEncoder(stdout).Encode(result)
@@ -619,6 +819,51 @@ func deployCredentialProvider(home string, passphrase []byte) deploy.CredentialP
 		}
 		return secret, err
 	}
+}
+
+func applyCLIApprovalRequest(targetID, clusterID string, batch int, confirmSnapshot string, execute bool, request store.ApprovalRequest) (string, string, int, string, []string, error) {
+	if targetID != "" && targetID != request.TargetID {
+		return "", "", 0, "", nil, errors.New("approval request target_id does not match deploy request")
+	}
+	if clusterID != "" && clusterID != request.ClusterID {
+		return "", "", 0, "", nil, errors.New("approval request cluster_id does not match deploy request")
+	}
+	if batch != 0 && batch != request.Batch {
+		return "", "", 0, "", nil, errors.New("approval request batch does not match deploy request")
+	}
+	if confirmSnapshot != "" && confirmSnapshot != request.SnapshotHash {
+		return "", "", 0, "", nil, errors.New("approval request snapshot_hash does not match deploy request")
+	}
+	if execute && request.Status != store.ApprovalStatusApproved {
+		return "", "", 0, "", nil, errors.New("approval request is not fully approved")
+	}
+	return request.TargetID, request.ClusterID, request.Batch, request.SnapshotHash, request.ApprovedActors(), nil
+}
+
+func approvalPolicyFromTargets(targets store.TargetsFile, targetID, clusterID string) (int, error) {
+	if targetID == "" && clusterID == "" {
+		return 0, errors.New("target_id or cluster_id is required")
+	}
+	if targetID != "" && clusterID != "" {
+		return 0, errors.New("exactly one of target_id or cluster_id is required")
+	}
+	if targetID != "" {
+		for _, target := range targets.Targets {
+			if target.ID == targetID {
+				return 0, nil
+			}
+		}
+		return 0, errors.New("target not found")
+	}
+	for _, cluster := range targets.Clusters {
+		if cluster.ID == clusterID {
+			if cluster.RequiredApprovals < 0 {
+				return 0, errors.New("cluster required approvals must be non-negative")
+			}
+			return cluster.RequiredApprovals, nil
+		}
+	}
+	return 0, errors.New("cluster not found")
 }
 
 func monitorCmd(ctx context.Context, args []string, stdout, stderr io.Writer) error {
@@ -712,8 +957,16 @@ func auditCmd(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		to := fs.String("to", "", "RFC3339 end timestamp")
 		actor := fs.String("actor", "", "actor filter")
 		action := fs.String("action", "", "action filter")
+		actionPrefix := fs.String("action-prefix", "", "action prefix filter")
 		outcome := fs.String("outcome", "", "outcome filter")
 		targetEngine := fs.String("target-engine", "", "target engine filter: haproxy or nginx")
+		targetID := fs.String("target-id", "", "metadata target id filter")
+		clusterID := fs.String("cluster-id", "", "metadata cluster id filter")
+		approvalRequestID := fs.String("approval-request-id", "", "metadata approval request id filter")
+		batch := fs.Int("batch", 0, "metadata rollout batch filter")
+		dryRun := fs.String("dry-run", "", "metadata dry-run filter: true or false")
+		incident := fs.String("incident", "", "incident filter: true or false")
+		rollbackFailed := fs.String("rollback-failed", "", "rollback failure filter: true or false")
 		csvOut := fs.Bool("csv", false, "write CSV instead of JSON")
 		out := fs.String("out", "", "write output to file")
 		if err := fs.Parse(args[1:]); err != nil {
@@ -722,7 +975,7 @@ func auditCmd(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		if *projectID == "" {
 			return errors.New("--project is required")
 		}
-		filter, err := auditFilterFromFlags(*limit, *from, *to, *actor, *action, *outcome, *targetEngine)
+		filter, err := auditFilterFromFlags(*limit, *from, *to, *actor, *action, *actionPrefix, *outcome, *targetEngine, *targetID, *clusterID, *approvalRequestID, *batch, *dryRun, *incident, *rollbackFailed)
 		if err != nil {
 			return err
 		}
@@ -849,11 +1102,438 @@ func secretCmd(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	}
 }
 
-func auditFilterFromFlags(limit int, from, to, actor, action, outcome, targetEngine string) (store.AuditFilter, error) {
+func backupCmd(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	if len(args) == 0 {
+		_, _ = fmt.Fprintln(stderr, "usage: mizan backup create|inspect|restore")
+		return errors.New("missing backup command")
+	}
+	switch args[0] {
+	case "create":
+		fs := flag.NewFlagSet("backup create", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		home := fs.String("home", store.DefaultRoot(), "Mizan data directory")
+		out := fs.String("out", "", "backup archive path")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if *out == "" {
+			return errors.New("--out is required")
+		}
+		manifest, err := createBackup(ctx, *home, *out)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(stdout).Encode(manifest)
+	case "inspect":
+		fs := flag.NewFlagSet("backup inspect", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		in := fs.String("in", "", "backup archive path")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if *in == "" {
+			return errors.New("--in is required")
+		}
+		manifest, err := inspectBackup(*in)
+		if err != nil {
+			return err
+		}
+		encoder := json.NewEncoder(stdout)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(manifest)
+	case "restore":
+		fs := flag.NewFlagSet("backup restore", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		home := fs.String("home", store.DefaultRoot(), "Mizan data directory")
+		in := fs.String("in", "", "backup archive path")
+		force := fs.Bool("force", false, "restore into a non-empty home directory")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if *in == "" {
+			return errors.New("--in is required")
+		}
+		manifest, err := restoreBackup(ctx, *home, *in, *force)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(stdout).Encode(map[string]any{"restored": true, "manifest": manifest})
+	default:
+		return fmt.Errorf("unknown backup command %q", args[0])
+	}
+}
+
+func createBackup(ctx context.Context, home, out string) (backupManifest, error) {
+	if err := ctx.Err(); err != nil {
+		return backupManifest{}, err
+	}
+	st := store.New(home)
+	if err := st.Bootstrap(ctx); err != nil {
+		return backupManifest{}, err
+	}
+	home = st.Root()
+	info, err := os.Stat(home)
+	if err != nil {
+		return backupManifest{}, err
+	}
+	if !info.IsDir() {
+		return backupManifest{}, fmt.Errorf("home %q is not a directory", home)
+	}
+	if inside, err := pathInside(home, out); err != nil {
+		return backupManifest{}, err
+	} else if inside {
+		return backupManifest{}, errors.New("backup output must be outside the home directory")
+	}
+	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
+		return backupManifest{}, err
+	}
+	f, err := os.Create(out)
+	if err != nil {
+		return backupManifest{}, err
+	}
+	defer f.Close()
+	zw := zip.NewWriter(f)
+
+	manifest := backupManifest{
+		FormatVersion: backupManifestVersion,
+		CreatedAt:     time.Now().UTC(),
+		SourceRoot:    home,
+		Files:         []backupFile{},
+	}
+	if err := filepath.WalkDir(home, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if path == home {
+			return nil
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(home, path)
+		if err != nil {
+			return err
+		}
+		rel = filepath.ToSlash(rel)
+		if rel == backupManifestPath || d.IsDir() {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		header, err := zip.FileInfoHeader(info)
+		if err != nil {
+			return err
+		}
+		header.Name = rel
+		header.Method = zip.Deflate
+		w, err := zw.CreateHeader(header)
+		if err != nil {
+			return err
+		}
+		src, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		hasher := sha256.New()
+		size, copyErr := io.Copy(io.MultiWriter(w, hasher), src)
+		closeErr := src.Close()
+		if copyErr != nil {
+			return copyErr
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+		manifest.Files = append(manifest.Files, backupFile{
+			Path:   rel,
+			Size:   size,
+			SHA256: hex.EncodeToString(hasher.Sum(nil)),
+		})
+		return nil
+	}); err != nil {
+		_ = zw.Close()
+		return backupManifest{}, err
+	}
+	if err := writeBackupManifest(zw, manifest); err != nil {
+		_ = zw.Close()
+		return backupManifest{}, err
+	}
+	if err := zw.Close(); err != nil {
+		return backupManifest{}, err
+	}
+	if err := f.Close(); err != nil {
+		return backupManifest{}, err
+	}
+	return manifest, nil
+}
+
+func doctorCmd(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	home := fs.String("home", store.DefaultRoot(), "Mizan data directory")
+	jsonOut := fs.Bool("json", false, "write machine-readable JSON")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	report := doctor.Run(ctx, store.New(*home), nil)
+	if *jsonOut {
+		encoder := json.NewEncoder(stdout)
+		encoder.SetIndent("", "  ")
+		if err := encoder.Encode(report); err != nil {
+			return err
+		}
+	} else {
+		_, _ = fmt.Fprintf(stdout, "Mizan doctor: %s\n", report.Status)
+		_, _ = fmt.Fprintf(stdout, "root: %s\n", report.Root)
+		_, _ = fmt.Fprintf(stdout, "projects: %d, targets: %d, clusters: %d\n", report.ProjectCount, report.TargetCount, report.ClusterCount)
+		for _, check := range report.Checks {
+			_, _ = fmt.Fprintf(stdout, "- [%s] %s: %s\n", check.Status, check.Name, check.Message)
+		}
+	}
+	if report.Status == doctor.StatusFail {
+		return errors.New("doctor checks failed")
+	}
+	return nil
+}
+
+func inspectBackup(path string) (backupManifest, error) {
+	zr, err := zip.OpenReader(path)
+	if err != nil {
+		return backupManifest{}, err
+	}
+	defer zr.Close()
+	return readBackupManifest(zr.File)
+}
+
+func restoreBackup(ctx context.Context, home, in string, force bool) (backupManifest, error) {
+	if err := ctx.Err(); err != nil {
+		return backupManifest{}, err
+	}
+	home = store.New(home).Root()
+	if err := ensureRestoreTarget(home, force); err != nil {
+		return backupManifest{}, err
+	}
+	zr, err := zip.OpenReader(in)
+	if err != nil {
+		return backupManifest{}, err
+	}
+	defer zr.Close()
+	manifest, err := readBackupManifest(zr.File)
+	if err != nil {
+		return backupManifest{}, err
+	}
+	if manifest.FormatVersion != backupManifestVersion {
+		return backupManifest{}, fmt.Errorf("unsupported backup format version %d", manifest.FormatVersion)
+	}
+	expectedFiles, err := expectedBackupFiles(manifest)
+	if err != nil {
+		return backupManifest{}, err
+	}
+	if force {
+		if err := os.RemoveAll(home); err != nil {
+			return backupManifest{}, err
+		}
+	}
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		return backupManifest{}, err
+	}
+	for _, file := range zr.File {
+		if err := ctx.Err(); err != nil {
+			return backupManifest{}, err
+		}
+		if file.Name == backupManifestPath {
+			continue
+		}
+		target, err := safeRestorePath(home, file.Name)
+		if err != nil {
+			return backupManifest{}, err
+		}
+		if file.FileInfo().IsDir() {
+			if err := os.MkdirAll(target, file.Mode()); err != nil {
+				return backupManifest{}, err
+			}
+			continue
+		}
+		expected, ok := expectedFiles[file.Name]
+		if !ok {
+			return backupManifest{}, fmt.Errorf("backup contains file not listed in manifest: %s", file.Name)
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return backupManifest{}, err
+		}
+		rc, err := file.Open()
+		if err != nil {
+			return backupManifest{}, err
+		}
+		size, hash, err := writeRestoredFile(target, file.Mode(), rc)
+		if err != nil {
+			_ = rc.Close()
+			_ = os.Remove(target)
+			return backupManifest{}, err
+		}
+		if err := rc.Close(); err != nil {
+			_ = os.Remove(target)
+			return backupManifest{}, err
+		}
+		if size != expected.Size || hash != expected.SHA256 {
+			_ = os.Remove(target)
+			return backupManifest{}, fmt.Errorf("backup integrity check failed for %s", file.Name)
+		}
+		delete(expectedFiles, file.Name)
+	}
+	for path := range expectedFiles {
+		return backupManifest{}, fmt.Errorf("backup is missing manifest file %s", path)
+	}
+	return manifest, nil
+}
+
+func expectedBackupFiles(manifest backupManifest) (map[string]backupFile, error) {
+	files := make(map[string]backupFile, len(manifest.Files))
+	for _, file := range manifest.Files {
+		if file.Path == "" {
+			return nil, errors.New("backup manifest contains an empty file path")
+		}
+		if file.Size < 0 {
+			return nil, fmt.Errorf("backup manifest contains negative size for %s", file.Path)
+		}
+		if len(file.SHA256) != sha256.Size*2 {
+			return nil, fmt.Errorf("backup manifest contains invalid sha256 for %s", file.Path)
+		}
+		if _, err := hex.DecodeString(file.SHA256); err != nil {
+			return nil, fmt.Errorf("backup manifest contains invalid sha256 for %s", file.Path)
+		}
+		file.SHA256 = strings.ToLower(file.SHA256)
+		if _, exists := files[file.Path]; exists {
+			return nil, fmt.Errorf("backup manifest contains duplicate file path %s", file.Path)
+		}
+		files[file.Path] = file
+	}
+	return files, nil
+}
+
+func ensureRestoreTarget(home string, force bool) error {
+	entries, err := os.ReadDir(home)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	if len(entries) > 0 && !force {
+		return fmt.Errorf("restore target %q is not empty; use --force to replace it", home)
+	}
+	return nil
+}
+
+func writeBackupManifest(zw *zip.Writer, manifest backupManifest) error {
+	data, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return err
+	}
+	header := &zip.FileHeader{Name: backupManifestPath, Method: zip.Deflate}
+	header.SetMode(0o644)
+	w, err := zw.CreateHeader(header)
+	if err != nil {
+		return err
+	}
+	_, err = w.Write(append(data, '\n'))
+	return err
+}
+
+func readBackupManifest(files []*zip.File) (backupManifest, error) {
+	for _, file := range files {
+		if file.Name != backupManifestPath {
+			continue
+		}
+		rc, err := file.Open()
+		if err != nil {
+			return backupManifest{}, err
+		}
+		defer rc.Close()
+		var manifest backupManifest
+		if err := json.NewDecoder(rc).Decode(&manifest); err != nil {
+			return backupManifest{}, err
+		}
+		return manifest, nil
+	}
+	return backupManifest{}, errors.New("backup manifest is missing")
+}
+
+func safeRestorePath(root, name string) (string, error) {
+	if name == "" || filepath.IsAbs(name) || strings.Contains(name, "\\") {
+		return "", fmt.Errorf("unsafe backup path %q", name)
+	}
+	clean := pathCleanSlash(name)
+	if clean == "." || strings.HasPrefix(clean, "../") || clean == ".." {
+		return "", fmt.Errorf("unsafe backup path %q", name)
+	}
+	target := filepath.Join(root, filepath.FromSlash(clean))
+	rel, err := filepath.Rel(root, target)
+	if err != nil {
+		return "", err
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return "", fmt.Errorf("unsafe backup path %q", name)
+	}
+	return target, nil
+}
+
+func pathCleanSlash(name string) string {
+	return filepath.ToSlash(filepath.Clean(filepath.FromSlash(name)))
+}
+
+func writeRestoredFile(path string, mode os.FileMode, r io.Reader) (int64, string, error) {
+	if mode == 0 {
+		mode = 0o644
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
+	if err != nil {
+		return 0, "", err
+	}
+	defer f.Close()
+	hasher := sha256.New()
+	size, err := io.Copy(io.MultiWriter(f, hasher), r)
+	if err != nil {
+		return 0, "", err
+	}
+	return size, hex.EncodeToString(hasher.Sum(nil)), nil
+}
+
+func pathInside(root, candidate string) (bool, error) {
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return false, err
+	}
+	candidateAbs, err := filepath.Abs(candidate)
+	if err != nil {
+		return false, err
+	}
+	rel, err := filepath.Rel(rootAbs, candidateAbs)
+	if err != nil {
+		return false, err
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))), nil
+}
+
+func auditFilterFromFlags(limit int, from, to, actor, action, actionPrefix, outcome, targetEngine, targetID, clusterID, approvalRequestID string, batch int, dryRun, incident, rollbackFailed string) (store.AuditFilter, error) {
 	if limit < 1 {
 		return store.AuditFilter{}, errors.New("--limit must be greater than zero")
 	}
-	filter := store.AuditFilter{Limit: limit, Actor: actor, Action: action, Outcome: outcome}
+	if batch < 0 {
+		return store.AuditFilter{}, errors.New("--batch must be greater than zero")
+	}
+	filter := store.AuditFilter{
+		Limit:             limit,
+		Actor:             actor,
+		Action:            action,
+		ActionPrefix:      actionPrefix,
+		Outcome:           outcome,
+		TargetID:          targetID,
+		ClusterID:         clusterID,
+		ApprovalRequestID: approvalRequestID,
+		Batch:             batch,
+	}
 	if from != "" {
 		parsed, err := time.Parse(time.RFC3339, from)
 		if err != nil {
@@ -874,6 +1554,27 @@ func auditFilterFromFlags(limit int, from, to, actor, action, outcome, targetEng
 			return filter, fmt.Errorf("invalid --target-engine %q", targetEngine)
 		}
 		filter.TargetEngine = engine
+	}
+	if dryRun != "" {
+		parsed, err := strconv.ParseBool(dryRun)
+		if err != nil {
+			return filter, fmt.Errorf("invalid --dry-run %q", dryRun)
+		}
+		filter.DryRun = &parsed
+	}
+	if incident != "" {
+		parsed, err := strconv.ParseBool(incident)
+		if err != nil {
+			return filter, fmt.Errorf("invalid --incident %q", incident)
+		}
+		filter.Incident = &parsed
+	}
+	if rollbackFailed != "" {
+		parsed, err := strconv.ParseBool(rollbackFailed)
+		if err != nil {
+			return filter, fmt.Errorf("invalid --rollback-failed %q", rollbackFailed)
+		}
+		filter.RollbackFailed = &parsed
 	}
 	return filter, nil
 }
@@ -952,7 +1653,7 @@ func usage(w io.Writer) {
 	_, _ = fmt.Fprintln(w, `Mizan - visual config architect for HAProxy and Nginx
 
 Usage:
-  mizan serve [--bind 127.0.0.1:7890]
+  mizan serve [--bind 127.0.0.1:7890] [--max-body-bytes 10485760]
   mizan project new --name edge-prod --engines haproxy,nginx
   mizan project import ./haproxy.cfg --name imported-edge
   mizan project export <id> [--out mizan-export.json]
@@ -963,8 +1664,16 @@ Usage:
   mizan generate --project <id> --target haproxy [--out haproxy.cfg]
   mizan validate --project <id> --target nginx
   mizan deploy --project <id> --target-id <target-id>
+  mizan deploy --project <id> --cluster-id <cluster-id> [--batch 1]
+  mizan deploy --project <id> --cluster-id <cluster-id> --execute --confirm-snapshot <snapshot_hash> --approved-by alice,bob
+  mizan approval request --project <id> --cluster-id <cluster-id> [--batch 1]
+  mizan approval approve --project <id> --actor alice <approval-request-id>
+  mizan deploy --project <id> --approval-request-id <approval-request-id> --execute
   mizan audit show --project <id> [--csv]
   mizan secret set --id <target-id> --username root --private-key-file ~/.ssh/id_ed25519
+  mizan backup create --out mizan-backup.zip
+  mizan backup restore --in mizan-backup.zip --home /tmp/mizan-restore
+  mizan doctor
   mizan monitor snapshot --project <id>
   mizan monitor stream --project <id> [--limit 10]
   mizan version`)

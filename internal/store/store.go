@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -52,13 +53,21 @@ type AuditEvent struct {
 }
 
 type AuditFilter struct {
-	Limit        int
-	From         time.Time
-	To           time.Time
-	Actor        string
-	Action       string
-	Outcome      string
-	TargetEngine ir.Engine
+	Limit             int
+	From              time.Time
+	To                time.Time
+	Actor             string
+	Action            string
+	ActionPrefix      string
+	Outcome           string
+	TargetEngine      ir.Engine
+	TargetID          string
+	ClusterID         string
+	ApprovalRequestID string
+	Batch             int
+	DryRun            *bool
+	Incident          *bool
+	RollbackFailed    *bool
 }
 
 var (
@@ -401,13 +410,84 @@ func matchesAuditFilter(event AuditEvent, filter AuditFilter) bool {
 	if filter.Action != "" && event.Action != filter.Action {
 		return false
 	}
+	if filter.ActionPrefix != "" && !strings.HasPrefix(event.Action, filter.ActionPrefix) {
+		return false
+	}
 	if filter.Outcome != "" && event.Outcome != filter.Outcome {
 		return false
 	}
 	if filter.TargetEngine != "" && event.TargetEngine != filter.TargetEngine {
 		return false
 	}
+	if filter.TargetID != "" && auditMetadataString(event.Metadata, "target_id") != filter.TargetID {
+		return false
+	}
+	if filter.ClusterID != "" && auditMetadataString(event.Metadata, "cluster_id") != filter.ClusterID {
+		return false
+	}
+	if filter.ApprovalRequestID != "" && auditMetadataString(event.Metadata, "approval_request_id") != filter.ApprovalRequestID {
+		return false
+	}
+	if filter.Batch > 0 && auditMetadataInt(event.Metadata, "batch") != filter.Batch {
+		return false
+	}
+	if filter.DryRun != nil && auditMetadataBool(event.Metadata, "dry_run") != *filter.DryRun {
+		return false
+	}
+	if filter.RollbackFailed != nil && auditRollbackFailed(event) != *filter.RollbackFailed {
+		return false
+	}
+	if filter.Incident != nil && auditIncident(event) != *filter.Incident {
+		return false
+	}
 	return true
+}
+
+func auditIncident(event AuditEvent) bool {
+	return event.Outcome == "failed" || auditRollbackFailed(event)
+}
+
+func auditRollbackFailed(event AuditEvent) bool {
+	rollback, ok := event.Metadata["rollback"].(map[string]any)
+	if !ok {
+		return false
+	}
+	return auditMetadataInt(rollback, "failed") > 0
+}
+
+func auditMetadataString(metadata map[string]any, key string) string {
+	if metadata == nil {
+		return ""
+	}
+	value, _ := metadata[key].(string)
+	return value
+}
+
+func auditMetadataBool(metadata map[string]any, key string) bool {
+	if metadata == nil {
+		return false
+	}
+	value, _ := metadata[key].(bool)
+	return value
+}
+
+func auditMetadataInt(metadata map[string]any, key string) int {
+	if metadata == nil {
+		return 0
+	}
+	switch value := metadata[key].(type) {
+	case int:
+		return value
+	case int64:
+		return int(value)
+	case float64:
+		return int(value)
+	case json.Number:
+		parsed, _ := strconv.Atoi(value.String())
+		return parsed
+	default:
+		return 0
+	}
 }
 
 func (s *Store) writeSnapshot(id, hash string, model *ir.Model) error {

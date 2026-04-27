@@ -67,6 +67,11 @@ func parseNginxUpstreamLine(m *ir.Model, be *ir.Backend, fields []string) {
 				srv.Weight = n
 			}
 		}
+		if strings.HasPrefix(field, "max_conns=") {
+			if n, err := strconv.Atoi(strings.TrimPrefix(field, "max_conns=")); err == nil {
+				srv.MaxConn = n
+			}
+		}
 	}
 	m.Servers = append(m.Servers, srv)
 	be.Servers = appendUnique(be.Servers, srv.ID)

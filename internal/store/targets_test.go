@@ -79,6 +79,9 @@ func TestTargetErrors(t *testing.T) {
 	if _, err := st.UpsertCluster(t.Context(), meta.ID, Cluster{Name: "bad", TargetIDs: []string{"missing"}}); err == nil {
 		t.Fatal("expected missing target reference error")
 	}
+	if _, err := st.UpsertCluster(t.Context(), meta.ID, Cluster{Name: "bad-approvals", RequiredApprovals: -1}); err == nil {
+		t.Fatal("expected negative required approvals error")
+	}
 	if err := st.DeleteTarget(t.Context(), meta.ID, "missing"); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("expected missing target error, got %v", err)
 	}
@@ -129,7 +132,7 @@ func TestTargetDefaultsSortingAndCorruptFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	zCluster, err := st.UpsertCluster(t.Context(), meta.ID, Cluster{Name: "z-cluster", TargetIDs: []string{zTarget.ID}, Parallelism: 3, GateOnFailure: true})
+	zCluster, err := st.UpsertCluster(t.Context(), meta.ID, Cluster{Name: "z-cluster", TargetIDs: []string{zTarget.ID}, Parallelism: 3, GateOnFailure: true, RequiredApprovals: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,6 +145,9 @@ func TestTargetDefaultsSortingAndCorruptFile(t *testing.T) {
 	}
 	if !zCluster.CreatedAt.Equal(clusterCreatedAt) {
 		t.Fatalf("cluster created_at was not preserved: got %v want %v", zCluster.CreatedAt, clusterCreatedAt)
+	}
+	if zCluster.RequiredApprovals != 2 {
+		t.Fatalf("cluster required approvals was not preserved: %+v", zCluster)
 	}
 	if _, err := st.UpsertCluster(t.Context(), meta.ID, Cluster{Name: "a-cluster", TargetIDs: []string{aTarget.ID}}); err != nil {
 		t.Fatal(err)

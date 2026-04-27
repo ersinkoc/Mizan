@@ -33,3 +33,15 @@ jobs:
         working-directory: webui
       - run: npm run build
         working-directory: webui
+      - run: npx playwright install --with-deps chromium
+        working-directory: webui
+      - run: npm run test:e2e
+        working-directory: webui
+      - run: npm audit
+        working-directory: webui
+
+  container:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build --build-arg VERSION=ci --build-arg COMMIT=${{ github.sha }} --build-arg DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" -t mizan:ci .

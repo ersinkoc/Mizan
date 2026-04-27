@@ -1,0 +1,32 @@
+[Unit]
+Description=Mizan local-first proxy configuration control plane
+Documentation=https://github.com/mizanproxy/mizan
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mizan
+Group=mizan
+Environment=MIZAN_BIND=127.0.0.1:7890
+Environment=MIZAN_HOME=/var/lib/mizan
+Environment=MIZAN_MAX_BODY_BYTES=10485760
+Environment=MIZAN_SHUTDOWN_TIMEOUT=10s
+EnvironmentFile=-/etc/mizan/mizan.env
+ExecStart=/usr/local/bin/mizan serve --bind ${MIZAN_BIND} --home ${MIZAN_HOME} --max-body-bytes ${MIZAN_MAX_BODY_BYTES} --shutdown-timeout ${MIZAN_SHUTDOWN_TIMEOUT}
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=15s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/mizan
+CapabilityBoundingSet=
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictRealtime=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

@@ -3,6 +3,10 @@ name: Release
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+  id-token: write
+
 jobs:
   build:
     strategy:
@@ -23,10 +27,20 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: webui/package-lock.json
+      - uses: sigstore/cosign-installer@v3
       - run: npm install
         working-directory: webui
       - run: npm run build
         working-directory: webui
       - run: rm -rf internal/server/dist && cp -r webui/dist internal/server/dist
       - run: GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} CGO_ENABLED=0 go build -trimpath -o dist/mizan-${{ matrix.goos }}-${{ matrix.goarch }} ./cmd/mizan
-
+      - run: cd dist && sha256sum mizan-${{ matrix.goos }}-${{ matrix.goarch }} > mizan-${{ matrix.goos }}-${{ matrix.goarch }}.sha256
+      - run: cosign sign-blob --yes --output-signature dist/mizan-${{ matrix.goos }}-${{ matrix.goarch }}.sig --output-certificate dist/mizan-${{ matrix.goos }}-${{ matrix.goarch }}.pem dist/mizan-${{ matrix.goos }}-${{ matrix.goarch }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mizan-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: |
+            dist/mizan-${{ matrix.goos }}-${{ matrix.goarch }}
+            dist/mizan-${{ matrix.goos }}-${{ matrix.goarch }}.sha256
+            dist/mizan-${{ matrix.goos }}-${{ matrix.goarch }}.sig
+            dist/mizan-${{ matrix.goos }}-${{ matrix.goarch }}.pem

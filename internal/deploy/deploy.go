@@ -18,22 +18,36 @@ import (
 )
 
 type Request struct {
-	ProjectID string
-	TargetID  string
-	ClusterID string
-	DryRun    bool
+	ProjectID           string
+	TargetID            string
+	ClusterID           string
+	DryRun              bool
+	ConfirmSnapshotHash string
+	Batch               int
+	ApprovedBy          []string
 }
 
 type Result struct {
-	ProjectID    string `json:"project_id"`
-	TargetID     string `json:"target_id,omitempty"`
-	ClusterID    string `json:"cluster_id,omitempty"`
-	SnapshotHash string `json:"snapshot_hash"`
-	DryRun       bool   `json:"dry_run"`
-	Status       string `json:"status"`
-	StartedAt    string `json:"started_at"`
-	FinishedAt   string `json:"finished_at"`
-	Steps        []Step `json:"steps"`
+	ProjectID         string        `json:"project_id"`
+	TargetID          string        `json:"target_id,omitempty"`
+	ClusterID         string        `json:"cluster_id,omitempty"`
+	SnapshotHash      string        `json:"snapshot_hash"`
+	DryRun            bool          `json:"dry_run"`
+	Batch             int           `json:"batch,omitempty"`
+	RequiredApprovals int           `json:"required_approvals,omitempty"`
+	ApprovedBy        []string      `json:"approved_by,omitempty"`
+	Rollback          RollbackStats `json:"rollback"`
+	Status            string        `json:"status"`
+	StartedAt         string        `json:"started_at"`
+	FinishedAt        string        `json:"finished_at"`
+	Steps             []Step        `json:"steps"`
+}
+
+type RollbackStats struct {
+	Planned   int `json:"planned"`
+	Attempted int `json:"attempted"`
+	Succeeded int `json:"succeeded"`
+	Failed    int `json:"failed"`
 }
 
 type Step struct {
@@ -94,15 +108,35 @@ func (d Deployer) Run(ctx context.Context, st *store.Store, req Request) (Result
 	if req.TargetID == "" && req.ClusterID == "" {
 		return Result{}, errors.New("target_id or cluster_id is required")
 	}
+	if req.TargetID != "" && req.ClusterID != "" {
+		return Result{}, errors.New("exactly one of target_id or cluster_id is required")
+	}
+	if req.Batch < 0 {
+		return Result{}, errors.New("batch must be non-negative")
+	}
 	model, snapshot, err := st.GetIR(ctx, req.ProjectID)
 	if err != nil {
 		return Result{}, err
+	}
+	if !req.DryRun && req.ConfirmSnapshotHash != snapshot {
+		return Result{}, errors.New("execute requires confirm_snapshot_hash matching the current project snapshot")
 	}
 	targetsFile, err := st.ListTargets(ctx, req.ProjectID)
 	if err != nil {
 		return Result{}, err
 	}
-	selected, parallelism, gate, err := selectTargets(targetsFile, req)
+	selected, parallelism, gate, requiredApprovals, err := selectTargets(targetsFile, req)
+	if err != nil {
+		return Result{}, err
+	}
+	approvedBy, err := normalizeApprovals(req.ApprovedBy)
+	if err != nil {
+		return Result{}, err
+	}
+	if !req.DryRun && requiredApprovals > 0 && len(approvedBy) < requiredApprovals {
+		return Result{}, fmt.Errorf("execute requires %d distinct approval(s); got %d", requiredApprovals, len(approvedBy))
+	}
+	selected, err = filterBatch(selected, parallelism, req.Batch)
 	if err != nil {
 		return Result{}, err
 	}
@@ -118,16 +152,22 @@ func (d Deployer) Run(ctx context.Context, st *store.Store, req Request) (Result
 
 	started := d.Now()
 	result := Result{
-		ProjectID:    req.ProjectID,
-		TargetID:     req.TargetID,
-		ClusterID:    req.ClusterID,
-		SnapshotHash: snapshot,
-		DryRun:       req.DryRun,
-		Status:       "success",
-		StartedAt:    started.Format(time.RFC3339),
+		ProjectID:         req.ProjectID,
+		TargetID:          req.TargetID,
+		ClusterID:         req.ClusterID,
+		SnapshotHash:      snapshot,
+		DryRun:            req.DryRun,
+		Batch:             req.Batch,
+		RequiredApprovals: requiredApprovals,
+		ApprovedBy:        approvedBy,
+		Status:            "success",
+		StartedAt:         started.Format(time.RFC3339),
 	}
 	for index, target := range selected {
 		batch := index/parallelism + 1
+		if req.Batch > 0 {
+			batch = req.Batch
+		}
 		credential := secrets.Secret{}
 		if !req.DryRun && d.Credentials != nil {
 			var err error
@@ -151,8 +191,47 @@ func (d Deployer) Run(ctx context.Context, st *store.Store, req Request) (Result
 			}
 		}
 	}
+	result.Rollback = RollbackSummary(result.Steps)
 	result.FinishedAt = d.Now().Format(time.RFC3339)
 	return result, nil
+}
+
+func filterBatch(targets []store.Target, parallelism int, batch int) ([]store.Target, error) {
+	if batch == 0 {
+		return targets, nil
+	}
+	if parallelism <= 0 {
+		parallelism = 1
+	}
+	start := (batch - 1) * parallelism
+	if start >= len(targets) {
+		return nil, fmt.Errorf("batch %d has no targets", batch)
+	}
+	end := start + parallelism
+	if end > len(targets) {
+		end = len(targets)
+	}
+	return targets[start:end], nil
+}
+
+func normalizeApprovals(items []string) ([]string, error) {
+	seen := map[string]bool{}
+	approvals := []string{}
+	for _, item := range items {
+		for _, part := range strings.Split(item, ",") {
+			approval := strings.TrimSpace(part)
+			if approval == "" {
+				continue
+			}
+			key := strings.ToLower(approval)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			approvals = append(approvals, approval)
+		}
+	}
+	return approvals, nil
 }
 
 func (d Deployer) runTarget(ctx context.Context, model *ir.Model, projectID string, target store.Target, credential secrets.Secret, batch int, dryRun bool) []Step {
@@ -190,6 +269,9 @@ func (d Deployer) runTarget(ctx context.Context, model *ir.Model, projectID stri
 			step.Status = "failed"
 			step.Message = strings.TrimSpace(output + "\n" + runErr.Error())
 			steps = append(steps, step)
+			if target.RollbackCommand != "" && (item.stage == "install" || item.stage == "reload") {
+				steps = append(steps, d.rollbackStep(ctx, target, credential, batch, dryRun))
+			}
 			return steps
 		} else {
 			step.Credential = credentialSource(credential)
@@ -207,11 +289,17 @@ func (d Deployer) runTarget(ctx context.Context, model *ir.Model, projectID stri
 			step.Status = "failed"
 			step.Message = err.Error()
 			steps = append(steps, step)
+			if target.RollbackCommand != "" {
+				steps = append(steps, d.rollbackStep(ctx, target, credential, batch, dryRun))
+			}
 			return steps
 		} else {
 			step.Status = "success"
 		}
 		steps = append(steps, step)
+	}
+	if dryRun && target.RollbackCommand != "" {
+		steps = append(steps, d.rollbackStep(ctx, target, credential, batch, dryRun))
 	}
 	cleanup := Step{TargetID: target.ID, TargetName: target.Name, Engine: target.Engine, Stage: "cleanup", Command: cleanupCommand(remoteTmp), Batch: batch}
 	if dryRun {
@@ -232,14 +320,45 @@ func (d Deployer) runTarget(ctx context.Context, model *ir.Model, projectID stri
 	return steps
 }
 
-func selectTargets(file store.TargetsFile, req Request) ([]store.Target, int, bool, error) {
+func (d Deployer) rollbackStep(ctx context.Context, target store.Target, credential secrets.Secret, batch int, dryRun bool) Step {
+	step := Step{
+		TargetID:   target.ID,
+		TargetName: target.Name,
+		Engine:     target.Engine,
+		Stage:      "rollback",
+		Command:    rollbackCommand(target),
+		Batch:      batch,
+	}
+	if target.RollbackCommand == "" {
+		step.Status = "skipped"
+		step.Message = "no rollback command configured"
+		return step
+	}
+	if dryRun {
+		step.Status = "skipped"
+		step.Message = "runs after failed install, reload, or probe"
+		return step
+	}
+	output, err := d.Runner(ctx, target, credential, step.Command, "")
+	step.Credential = credentialSource(credential)
+	step.Message = strings.TrimSpace(output)
+	if err != nil {
+		step.Status = "failed"
+		step.Message = strings.TrimSpace(output + "\n" + err.Error())
+		return step
+	}
+	step.Status = "success"
+	return step
+}
+
+func selectTargets(file store.TargetsFile, req Request) ([]store.Target, int, bool, int, error) {
 	if req.TargetID != "" {
 		for _, target := range file.Targets {
 			if target.ID == req.TargetID {
-				return []store.Target{target}, 1, true, nil
+				return []store.Target{target}, 1, true, 0, nil
 			}
 		}
-		return nil, 0, false, errors.New("target not found")
+		return nil, 0, false, 0, errors.New("target not found")
 	}
 	for _, cluster := range file.Clusters {
 		if cluster.ID == req.ClusterID {
@@ -251,20 +370,23 @@ func selectTargets(file store.TargetsFile, req Request) ([]store.Target, int, bo
 			for _, id := range cluster.TargetIDs {
 				target, ok := byID[id]
 				if !ok {
-					return nil, 0, false, errors.New("cluster references a missing target")
+					return nil, 0, false, 0, errors.New("cluster references a missing target")
 				}
 				selected = append(selected, target)
 			}
 			if len(selected) == 0 {
-				return nil, 0, false, errors.New("cluster has no targets")
+				return nil, 0, false, 0, errors.New("cluster has no targets")
 			}
 			if cluster.Parallelism <= 0 {
 				cluster.Parallelism = 1
 			}
-			return selected, cluster.Parallelism, cluster.GateOnFailure, nil
+			if cluster.RequiredApprovals < 0 {
+				cluster.RequiredApprovals = 0
+			}
+			return selected, cluster.Parallelism, cluster.GateOnFailure, cluster.RequiredApprovals, nil
 		}
 	}
-	return nil, 0, false, errors.New("cluster not found")
+	return nil, 0, false, 0, errors.New("cluster not found")
 }
 
 func uploadCommand(target store.Target, remoteTmp string) string {
@@ -285,6 +407,10 @@ func installCommand(target store.Target, remoteTmp string) string {
 
 func reloadCommand(target store.Target) string {
 	return sudoCommand(target, target.ReloadCommand)
+}
+
+func rollbackCommand(target store.Target) string {
+	return sudoCommand(target, target.RollbackCommand)
 }
 
 func cleanupCommand(remoteTmp string) string {
@@ -434,6 +560,26 @@ func CredentialSources(steps []Step) []string {
 		sources = append(sources, step.Credential)
 	}
 	return sources
+}
+
+func RollbackSummary(steps []Step) RollbackStats {
+	var stats RollbackStats
+	for _, step := range steps {
+		if step.Stage != "rollback" {
+			continue
+		}
+		stats.Planned++
+		if step.Status == "skipped" {
+			continue
+		}
+		stats.Attempted++
+		if step.Status == "failed" {
+			stats.Failed++
+		} else if step.Status == "success" {
+			stats.Succeeded++
+		}
+	}
+	return stats
 }
 
 func credentialFailureStep(target store.Target, batch int, err error) Step {

@@ -1,6 +1,7 @@
 import type {
   AuditEvent,
   AuditFilters,
+  ApprovalRequest,
   DiffResponse,
   DeployResult,
   Engine,
@@ -43,8 +44,16 @@ function auditFilterParams(filters: AuditFilters = { limit: 100 }) {
   if (filters.to) params.set('to', new Date(filters.to).toISOString());
   if (filters.actor) params.set('actor', filters.actor);
   if (filters.action) params.set('action', filters.action);
+  if (filters.action_prefix) params.set('action_prefix', filters.action_prefix);
   if (filters.outcome) params.set('outcome', filters.outcome);
   if (filters.target_engine) params.set('target_engine', filters.target_engine);
+  if (filters.target_id) params.set('target_id', filters.target_id);
+  if (filters.cluster_id) params.set('cluster_id', filters.cluster_id);
+  if (filters.approval_request_id) params.set('approval_request_id', filters.approval_request_id);
+  if (filters.batch) params.set('batch', String(filters.batch));
+  if (typeof filters.dry_run === 'boolean') params.set('dry_run', String(filters.dry_run));
+  if (typeof filters.incident === 'boolean') params.set('incident', String(filters.incident));
+  if (typeof filters.rollback_failed === 'boolean') params.set('rollback_failed', String(filters.rollback_failed));
   return params;
 }
 
@@ -119,7 +128,18 @@ export const api = {
     }),
   deleteCluster: (projectID: string, clusterID: string) =>
     request<void>(`/api/v1/projects/${projectID}/clusters/${clusterID}`, { method: 'DELETE' }),
-  deploy: (projectID: string, body: { target_id?: string; cluster_id?: string; dry_run?: boolean }) =>
+  listApprovals: (projectID: string) => request<ApprovalRequest[]>(`/api/v1/projects/${projectID}/approvals`),
+  createApproval: (projectID: string, body: { target_id?: string; cluster_id?: string; batch?: number }) =>
+    request<ApprovalRequest>(`/api/v1/projects/${projectID}/approvals`, {
+      method: 'POST',
+      body: JSON.stringify(body)
+    }),
+  approveApproval: (projectID: string, approvalID: string, actor: string) =>
+    request<ApprovalRequest>(`/api/v1/projects/${projectID}/approvals/${approvalID}/approve`, {
+      method: 'POST',
+      body: JSON.stringify({ actor })
+    }),
+  deploy: (projectID: string, body: { target_id?: string; cluster_id?: string; approval_request_id?: string; dry_run?: boolean; confirm_snapshot_hash?: string; batch?: number; approved_by?: string[] }) =>
     request<DeployResult>(`/api/v1/projects/${projectID}/deploy`, {
       method: 'POST',
       body: JSON.stringify(body)

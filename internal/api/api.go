@@ -43,7 +43,7 @@ var (
 func Register(mux *http.ServeMux, st *store.Store) {
 	h := &Handler{store: st}
 	mux.HandleFunc("GET /healthz", h.health)
-	mux.HandleFunc("GET /readyz", h.health)
+	mux.HandleFunc("GET /readyz", h.ready)
 	mux.HandleFunc("GET /metrics", h.metrics)
 	mux.HandleFunc("GET /version", h.version)
 	mux.HandleFunc("GET /api/v1/projects", h.listProjects)
@@ -63,6 +63,9 @@ func Register(mux *http.ServeMux, st *store.Store) {
 	mux.HandleFunc("POST /api/v1/projects/{id}/generate", h.generate)
 	mux.HandleFunc("POST /api/v1/projects/{id}/validate", h.validate)
 	mux.HandleFunc("POST /api/v1/projects/{id}/deploy", h.deploy)
+	mux.HandleFunc("GET /api/v1/projects/{id}/approvals", h.listApprovals)
+	mux.HandleFunc("POST /api/v1/projects/{id}/approvals", h.createApproval)
+	mux.HandleFunc("POST /api/v1/projects/{id}/approvals/{approvalID}/approve", h.approveApproval)
 	mux.HandleFunc("GET /api/v1/projects/{id}/monitor/snapshot", h.monitorSnapshot)
 	mux.HandleFunc("GET /api/v1/projects/{id}/monitor/stream", h.monitorStream)
 	mux.HandleFunc("GET /api/v1/projects/{id}/events", h.projectEvents)
@@ -78,6 +81,14 @@ func Register(mux *http.ServeMux, st *store.Store) {
 
 func (h *Handler) health(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (h *Handler) ready(w http.ResponseWriter, r *http.Request) {
+	if _, err := h.store.ListProjects(r.Context()); err != nil {
+		writeProblem(w, http.StatusServiceUnavailable, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "checks": map[string]string{"store": "ok"}})
 }
 
 func (h *Handler) version(w http.ResponseWriter, r *http.Request) {
@@ -147,12 +158,13 @@ type importProjectRequest struct {
 }
 
 type projectExportResponse struct {
-	FormatVersion int               `json:"format_version"`
-	ExportedAt    time.Time         `json:"exported_at"`
-	Project       store.ProjectMeta `json:"project"`
-	IR            *ir.Model         `json:"ir"`
-	Version       string            `json:"version"`
-	Targets       store.TargetsFile `json:"targets"`
+	FormatVersion int                     `json:"format_version"`
+	ExportedAt    time.Time               `json:"exported_at"`
+	Project       store.ProjectMeta       `json:"project"`
+	IR            *ir.Model               `json:"ir"`
+	Version       string                  `json:"version"`
+	Targets       store.TargetsFile       `json:"targets"`
+	Approvals     []store.ApprovalRequest `json:"approvals"`
 }
 
 func (h *Handler) importProject(w http.ResponseWriter, r *http.Request) {
@@ -209,8 +221,13 @@ func (h *Handler) exportProject(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusInternalServerError, err)
 		return
 	}
+	approvals, err := h.store.ListApprovalRequests(r.Context(), id)
+	if err != nil {
+		writeProblem(w, http.StatusInternalServerError, err)
+		return
+	}
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", meta.ID+"-mizan-export.json"))
-	h.audit(r, id, "project.export", version, "", "success", "", map[string]any{"targets": len(targets.Targets), "clusters": len(targets.Clusters)})
+	h.audit(r, id, "project.export", version, "", "success", "", map[string]any{"targets": len(targets.Targets), "clusters": len(targets.Clusters), "approvals": len(approvals)})
 	writeJSON(w, http.StatusOK, projectExportResponse{
 		FormatVersion: 1,
 		ExportedAt:    time.Now().UTC(),
@@ -218,6 +235,7 @@ func (h *Handler) exportProject(w http.ResponseWriter, r *http.Request) {
 		IR:            model,
 		Version:       version,
 		Targets:       targets,
+		Approvals:     approvals,
 	})
 }
 
@@ -444,9 +462,13 @@ func (h *Handler) validate(w http.ResponseWriter, r *http.Request) {
 }
 
 type deployRequest struct {
-	TargetID  string `json:"target_id"`
-	ClusterID string `json:"cluster_id"`
-	DryRun    *bool  `json:"dry_run"`
+	TargetID            string   `json:"target_id"`
+	ClusterID           string   `json:"cluster_id"`
+	ApprovalRequestID   string   `json:"approval_request_id,omitempty"`
+	DryRun              *bool    `json:"dry_run"`
+	ConfirmSnapshotHash string   `json:"confirm_snapshot_hash"`
+	Batch               int      `json:"batch,omitempty"`
+	ApprovedBy          []string `json:"approved_by,omitempty"`
 }
 
 func (h *Handler) deploy(w http.ResponseWriter, r *http.Request) {
@@ -459,24 +481,182 @@ func (h *Handler) deploy(w http.ResponseWriter, r *http.Request) {
 	if req.DryRun != nil {
 		dryRun = *req.DryRun
 	}
+	if req.ApprovalRequestID != "" {
+		approval, err := h.store.GetApprovalRequest(r.Context(), r.PathValue("id"), req.ApprovalRequestID)
+		if err != nil {
+			writeProblem(w, http.StatusBadRequest, err)
+			return
+		}
+		if err := applyApprovalRequest(&req, approval, dryRun); err != nil {
+			writeProblem(w, http.StatusBadRequest, err)
+			return
+		}
+	}
 	result, err := deploy.New().Run(r.Context(), h.store, deploy.Request{
-		ProjectID: r.PathValue("id"),
-		TargetID:  req.TargetID,
-		ClusterID: req.ClusterID,
-		DryRun:    dryRun,
+		ProjectID:           r.PathValue("id"),
+		TargetID:            req.TargetID,
+		ClusterID:           req.ClusterID,
+		DryRun:              dryRun,
+		ConfirmSnapshotHash: req.ConfirmSnapshotHash,
+		Batch:               req.Batch,
+		ApprovedBy:          req.ApprovedBy,
 	})
 	if err != nil {
 		writeProblem(w, http.StatusBadRequest, err)
 		return
 	}
 	h.audit(r, r.PathValue("id"), "deploy.run", result.SnapshotHash, "", result.Status, "", map[string]any{
-		"dry_run":     result.DryRun,
-		"target_id":   result.TargetID,
-		"cluster_id":  result.ClusterID,
-		"steps":       len(result.Steps),
-		"credentials": deploy.CredentialSources(result.Steps),
+		"dry_run":            result.DryRun,
+		"target_id":          result.TargetID,
+		"cluster_id":         result.ClusterID,
+		"steps":              len(result.Steps),
+		"batch":              result.Batch,
+		"required_approvals": result.RequiredApprovals,
+		"approved_by":        result.ApprovedBy,
+		"rollback":           result.Rollback,
+		"credentials":        deploy.CredentialSources(result.Steps),
 	})
 	writeJSON(w, http.StatusOK, result)
+}
+
+func applyApprovalRequest(req *deployRequest, approval store.ApprovalRequest, dryRun bool) error {
+	if req.TargetID != "" && req.TargetID != approval.TargetID {
+		return errors.New("approval request target_id does not match deploy request")
+	}
+	if req.ClusterID != "" && req.ClusterID != approval.ClusterID {
+		return errors.New("approval request cluster_id does not match deploy request")
+	}
+	if req.Batch != 0 && req.Batch != approval.Batch {
+		return errors.New("approval request batch does not match deploy request")
+	}
+	if req.ConfirmSnapshotHash != "" && req.ConfirmSnapshotHash != approval.SnapshotHash {
+		return errors.New("approval request snapshot_hash does not match deploy request")
+	}
+	if !dryRun && approval.Status != store.ApprovalStatusApproved {
+		return errors.New("approval request is not fully approved")
+	}
+	req.TargetID = approval.TargetID
+	req.ClusterID = approval.ClusterID
+	req.Batch = approval.Batch
+	req.ConfirmSnapshotHash = approval.SnapshotHash
+	req.ApprovedBy = append(req.ApprovedBy, approval.ApprovedActors()...)
+	return nil
+}
+
+type createApprovalRequest struct {
+	TargetID  string `json:"target_id"`
+	ClusterID string `json:"cluster_id"`
+	Batch     int    `json:"batch,omitempty"`
+}
+
+type approveApprovalRequest struct {
+	Actor string `json:"actor"`
+}
+
+func (h *Handler) listApprovals(w http.ResponseWriter, r *http.Request) {
+	requests, err := h.store.ListApprovalRequests(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeProblem(w, http.StatusNotFound, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, requests)
+}
+
+func (h *Handler) createApproval(w http.ResponseWriter, r *http.Request) {
+	var req createApprovalRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeProblem(w, http.StatusBadRequest, err)
+		return
+	}
+	_, snapshot, err := h.store.GetIR(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeProblem(w, http.StatusNotFound, err)
+		return
+	}
+	targets, err := h.store.ListTargets(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeProblem(w, http.StatusNotFound, err)
+		return
+	}
+	requiredApprovals, err := approvalPolicy(targets, req.TargetID, req.ClusterID)
+	if err != nil {
+		writeProblem(w, http.StatusBadRequest, err)
+		return
+	}
+	approval, err := h.store.CreateApprovalRequest(r.Context(), r.PathValue("id"), store.ApprovalRequest{
+		TargetID:          req.TargetID,
+		ClusterID:         req.ClusterID,
+		SnapshotHash:      snapshot,
+		Batch:             req.Batch,
+		RequiredApprovals: requiredApprovals,
+	})
+	if err != nil {
+		writeProblem(w, http.StatusBadRequest, err)
+		return
+	}
+	h.audit(r, r.PathValue("id"), "approval.request", snapshot, "", "success", "", map[string]any{
+		"approval_request_id": approval.ID,
+		"target_id":           approval.TargetID,
+		"cluster_id":          approval.ClusterID,
+		"batch":               approval.Batch,
+		"required_approvals":  approval.RequiredApprovals,
+	})
+	writeJSON(w, http.StatusCreated, approval)
+}
+
+func (h *Handler) approveApproval(w http.ResponseWriter, r *http.Request) {
+	var req approveApprovalRequest
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&req)
+	}
+	actor := strings.TrimSpace(req.Actor)
+	if actor == "" {
+		actor = actorFromRequest(r)
+	}
+	approval, err := h.store.ApproveRequest(r.Context(), r.PathValue("id"), r.PathValue("approvalID"), actor)
+	if err != nil {
+		writeProblem(w, http.StatusBadRequest, err)
+		return
+	}
+	h.audit(r, r.PathValue("id"), "approval.approve", approval.SnapshotHash, "", "success", "", map[string]any{
+		"approval_request_id": approval.ID,
+		"actor":               actor,
+		"status":              approval.Status,
+		"approvals":           len(approval.Approvals),
+		"required_approvals":  approval.RequiredApprovals,
+	})
+	writeJSON(w, http.StatusOK, approval)
+}
+
+func approvalPolicy(targets store.TargetsFile, targetID, clusterID string) (int, error) {
+	if targetID == "" && clusterID == "" {
+		return 0, errors.New("target_id or cluster_id is required")
+	}
+	if targetID != "" && clusterID != "" {
+		return 0, errors.New("exactly one of target_id or cluster_id is required")
+	}
+	if targetID != "" {
+		for _, target := range targets.Targets {
+			if target.ID == targetID {
+				return 0, nil
+			}
+		}
+		return 0, errors.New("target not found")
+	}
+	for _, cluster := range targets.Clusters {
+		if cluster.ID == clusterID {
+			if cluster.RequiredApprovals < 0 {
+				return 0, errors.New("cluster required approvals must be non-negative")
+			}
+			return cluster.RequiredApprovals, nil
+		}
+	}
+	return 0, errors.New("cluster not found")
+}
+
+type projectStreamEvent struct {
+	Project store.ProjectMeta `json:"project"`
+	Version string            `json:"version"`
 }
 
 func (h *Handler) monitorSnapshot(w http.ResponseWriter, r *http.Request) {
@@ -564,8 +744,66 @@ func (h *Handler) projectEvents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	seen := map[string]bool{}
+	lastProject := ""
+	lastTargets := ""
+	lastApprovals := ""
 	sent := 0
+	send := func(event string, payload any) bool {
+		if !writeSSE(w, event, payload) {
+			return false
+		}
+		sent++
+		return limit == 0 || sent < limit
+	}
 	emit := func() (bool, error) {
+		meta, err := h.store.GetProject(r.Context(), projectID)
+		if err != nil {
+			_ = writeSSE(w, "error", map[string]string{"error": err.Error()})
+			flusher.Flush()
+			return false, err
+		}
+		_, version, err := h.store.GetIR(r.Context(), projectID)
+		if err != nil {
+			_ = writeSSE(w, "error", map[string]string{"error": err.Error()})
+			flusher.Flush()
+			return false, err
+		}
+		projectKey := meta.UpdatedAt.Format(time.RFC3339Nano) + "|" + version
+		if projectKey != lastProject {
+			lastProject = projectKey
+			if !send("project", projectStreamEvent{Project: meta, Version: version}) {
+				flusher.Flush()
+				return false, nil
+			}
+		}
+		targets, err := h.store.ListTargets(r.Context(), projectID)
+		if err != nil {
+			_ = writeSSE(w, "error", map[string]string{"error": err.Error()})
+			flusher.Flush()
+			return false, err
+		}
+		targetsKey := targetsStreamSignature(targets)
+		if targetsKey != lastTargets {
+			lastTargets = targetsKey
+			if !send("targets", targets) {
+				flusher.Flush()
+				return false, nil
+			}
+		}
+		approvals, err := h.store.ListApprovalRequests(r.Context(), projectID)
+		if err != nil {
+			_ = writeSSE(w, "error", map[string]string{"error": err.Error()})
+			flusher.Flush()
+			return false, err
+		}
+		approvalsKey := approvalsStreamSignature(approvals)
+		if approvalsKey != lastApprovals {
+			lastApprovals = approvalsKey
+			if !send("approvals", approvals) {
+				flusher.Flush()
+				return false, nil
+			}
+		}
 		events, err := auditEventsFromStore(h.store, r, projectID, store.AuditFilter{Limit: 100})
 		if err != nil {
 			_ = writeSSE(w, "error", map[string]string{"error": err.Error()})
@@ -578,11 +816,8 @@ func (h *Handler) projectEvents(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			seen[event.EventID] = true
-			if !writeSSE(w, "audit", event) {
-				return false, nil
-			}
-			sent++
-			if limit > 0 && sent >= limit {
+			if !send("audit", event) {
+				flusher.Flush()
 				return false, nil
 			}
 		}
@@ -606,6 +841,16 @@ func (h *Handler) projectEvents(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+}
+
+func targetsStreamSignature(targets store.TargetsFile) string {
+	data, _ := json.Marshal(targets)
+	return string(data)
+}
+
+func approvalsStreamSignature(approvals []store.ApprovalRequest) string {
+	data, _ := json.Marshal(approvals)
+	return string(data)
 }
 
 func (h *Handler) listAudit(w http.ResponseWriter, r *http.Request) {
@@ -681,6 +926,7 @@ func auditFilterFromRequest(r *http.Request) (store.AuditFilter, error) {
 	}
 	filter.Actor = q.Get("actor")
 	filter.Action = q.Get("action")
+	filter.ActionPrefix = q.Get("action_prefix")
 	filter.Outcome = q.Get("outcome")
 	if raw := q.Get("target_engine"); raw != "" {
 		engine := ir.Engine(raw)
@@ -688,6 +934,37 @@ func auditFilterFromRequest(r *http.Request) (store.AuditFilter, error) {
 			return filter, fmt.Errorf("invalid audit target engine %q", raw)
 		}
 		filter.TargetEngine = engine
+	}
+	filter.TargetID = q.Get("target_id")
+	filter.ClusterID = q.Get("cluster_id")
+	filter.ApprovalRequestID = q.Get("approval_request_id")
+	if raw := q.Get("batch"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 {
+			return filter, fmt.Errorf("invalid audit batch %q", raw)
+		}
+		filter.Batch = parsed
+	}
+	if raw := q.Get("dry_run"); raw != "" {
+		parsed, err := strconv.ParseBool(raw)
+		if err != nil {
+			return filter, fmt.Errorf("invalid audit dry_run %q", raw)
+		}
+		filter.DryRun = &parsed
+	}
+	if raw := q.Get("incident"); raw != "" {
+		parsed, err := strconv.ParseBool(raw)
+		if err != nil {
+			return filter, fmt.Errorf("invalid audit incident %q", raw)
+		}
+		filter.Incident = &parsed
+	}
+	if raw := q.Get("rollback_failed"); raw != "" {
+		parsed, err := strconv.ParseBool(raw)
+		if err != nil {
+			return filter, fmt.Errorf("invalid audit rollback_failed %q", raw)
+		}
+		filter.RollbackFailed = &parsed
 	}
 	return filter, nil
 }

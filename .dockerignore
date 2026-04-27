@@ -1,0 +1,17 @@
+.git
+.github
+.project
+dist
+coverage
+coverage.out
+webui/dist
+webui/node_modules
+webui/coverage
+webui/test-results
+webui/playwright-report
+webui/*.tsbuildinfo
+webui/vite.config.js
+webui/vite.config.d.ts
+*.log
+.env
+*.out

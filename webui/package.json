@@ -8,7 +8,9 @@
     "build": "tsc -b && vite build",
     "lint": "tsc -b --pretty false",
     "test": "vitest run",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "e2e:prepare": "npm run build && node e2e/copy-dist.mjs",
+    "test:e2e": "npm run e2e:prepare && playwright test"
   },
   "dependencies": {
     "@xyflow/react": "^12.10.2",
@@ -17,6 +19,7 @@
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.59.1",
     "@types/node": "^22.10.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",

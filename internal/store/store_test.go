@@ -71,24 +71,34 @@ func TestAuditAppendAndList(t *testing.T) {
 	}
 	for _, event := range []AuditEvent{
 		{ProjectID: meta.ID, Actor: "Alice", Action: "config.generate", Outcome: "success", TargetEngine: ir.EngineHAProxy, Timestamp: base},
-		{ProjectID: meta.ID, Actor: "Bob", Action: "target.probe", Outcome: "failed", TargetEngine: ir.EngineNginx, Timestamp: base.Add(time.Hour)},
-		{ProjectID: meta.ID, Actor: "Alice", Action: "target.probe", Outcome: "success", TargetEngine: ir.EngineNginx, Timestamp: base.Add(2 * time.Hour)},
+		{ProjectID: meta.ID, Actor: "Bob", Action: "target.probe", Outcome: "failed", TargetEngine: ir.EngineNginx, Timestamp: base.Add(time.Hour), Metadata: map[string]any{"target_id": "t_1", "dry_run": true, "batch": 2}},
+		{ProjectID: meta.ID, Actor: "Alice", Action: "approval.request", Outcome: "success", TargetEngine: ir.EngineNginx, Timestamp: base.Add(2 * time.Hour), Metadata: map[string]any{"cluster_id": "c_1", "approval_request_id": "a_1"}},
+		{ProjectID: meta.ID, Actor: "Alice", Action: "deploy.run", Outcome: "success", TargetEngine: ir.EngineNginx, Timestamp: base.Add(3 * time.Hour), Metadata: map[string]any{"rollback": map[string]any{"failed": 1}}},
 	} {
 		if err := st.AppendAudit(ctx, event); err != nil {
 			t.Fatal(err)
 		}
 	}
+	trueValue := true
 	for _, tc := range []struct {
 		name   string
 		filter AuditFilter
 		want   string
 	}{
-		{"from", AuditFilter{From: base.Add(30 * time.Minute)}, "target.probe"},
+		{"from", AuditFilter{From: base.Add(30 * time.Minute)}, "deploy.run"},
 		{"to", AuditFilter{To: base.Add(30 * time.Minute)}, "config.generate"},
-		{"actor", AuditFilter{Actor: "alice", Limit: 1}, "target.probe"},
+		{"actor", AuditFilter{Actor: "alice", Limit: 1}, "deploy.run"},
 		{"action", AuditFilter{Action: "config.generate"}, "config.generate"},
+		{"action-prefix", AuditFilter{ActionPrefix: "approval."}, "approval.request"},
 		{"outcome", AuditFilter{Outcome: "failed"}, "target.probe"},
 		{"target", AuditFilter{TargetEngine: ir.EngineHAProxy}, "config.generate"},
+		{"target-id", AuditFilter{TargetID: "t_1"}, "target.probe"},
+		{"cluster-id", AuditFilter{ClusterID: "c_1"}, "approval.request"},
+		{"approval-request-id", AuditFilter{ApprovalRequestID: "a_1"}, "approval.request"},
+		{"batch", AuditFilter{Batch: 2}, "target.probe"},
+		{"dry-run", AuditFilter{DryRun: &trueValue}, "target.probe"},
+		{"incident", AuditFilter{Incident: &trueValue, Limit: 1}, "deploy.run"},
+		{"rollback-failed", AuditFilter{RollbackFailed: &trueValue}, "deploy.run"},
 		{"all", AuditFilter{Actor: "bob", Action: "target.probe", Outcome: "failed", TargetEngine: ir.EngineNginx, From: base.Add(30 * time.Minute), To: base.Add(90 * time.Minute)}, "target.probe"},
 	} {
 		events, err := st.ListAuditFiltered(ctx, meta.ID, tc.filter)

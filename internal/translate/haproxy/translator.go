@@ -76,6 +76,7 @@ func Generate(m *ir.Model) translate.Result {
 			lines.WriteString("  option httpchk GET " + path + "\n")
 		}
 		servers := serversForBackend(m, be)
+		hc := findHealth(m, be.HealthCheckID)
 		sort.SliceStable(servers, func(i, j int) bool { return servers[i].ID < servers[j].ID })
 		for _, srv := range servers {
 			name := safeName(srv.ID, srv.Name)
@@ -87,6 +88,17 @@ func Generate(m *ir.Model) translate.Result {
 				weight = 100
 			}
 			lines.WriteString(fmt.Sprintf("  server %s %s:%d weight %d check", name, srv.Address, srv.Port, weight))
+			if hc != nil {
+				if hc.IntervalMS > 0 {
+					lines.WriteString(" inter " + haproxyDuration(hc.IntervalMS))
+				}
+				if hc.Rise > 0 {
+					lines.WriteString(fmt.Sprintf(" rise %d", hc.Rise))
+				}
+				if hc.Fall > 0 {
+					lines.WriteString(fmt.Sprintf(" fall %d", hc.Fall))
+				}
+			}
 			if srv.MaxConn > 0 {
 				lines.WriteString(fmt.Sprintf(" maxconn %d", srv.MaxConn))
 			}
@@ -104,6 +116,13 @@ func Generate(m *ir.Model) translate.Result {
 	}
 
 	return translate.Result{Target: ir.EngineHAProxy, Config: b.String(), SourceMap: sm}
+}
+
+func haproxyDuration(ms int) string {
+	if ms%1000 == 0 {
+		return fmt.Sprintf("%ds", ms/1000)
+	}
+	return fmt.Sprintf("%dms", ms)
 }
 
 func safeName(id, name string) string {

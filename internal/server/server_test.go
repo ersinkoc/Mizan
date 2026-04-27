@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mizanproxy/mizan/internal/store"
 )
@@ -19,6 +20,12 @@ func TestServerRoutesAndSPA(t *testing.T) {
 	srv.Handler.ServeHTTP(res, req)
 	if res.Code != http.StatusOK {
 		t.Fatalf("health status=%d", res.Code)
+	}
+	if res.Header().Get("X-Content-Type-Options") != "nosniff" || res.Header().Get("X-Frame-Options") != "DENY" {
+		t.Fatalf("missing security headers: %+v", res.Header())
+	}
+	if res.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("dynamic cache-control=%q", res.Header().Get("Cache-Control"))
 	}
 	req = httptest.NewRequest(http.MethodGet, "/metrics", nil)
 	res = httptest.NewRecorder()
@@ -35,11 +42,40 @@ func TestServerRoutesAndSPA(t *testing.T) {
 	if res.Code != http.StatusOK {
 		t.Fatalf("spa status=%d", res.Code)
 	}
+	if res.Header().Get("Cache-Control") == "no-store" {
+		t.Fatal("static UI should not be marked no-store")
+	}
 	req = httptest.NewRequest(http.MethodGet, "/api/nope", nil)
 	res = httptest.NewRecorder()
 	srv.Handler.ServeHTTP(res, req)
 	if res.Code != http.StatusNotFound {
 		t.Fatalf("api fallback status=%d", res.Code)
+	}
+}
+
+func TestServerHardeningDefaultsAndBodyLimit(t *testing.T) {
+	st := store.New(t.TempDir())
+	srv := New(Config{MaxBodyBytes: 8}, st, slog.Default())
+	if srv.ReadHeaderTimeout != 5*time.Second || srv.ReadTimeout != 30*time.Second || srv.IdleTimeout != 120*time.Second || srv.MaxHeaderBytes != 1<<20 {
+		t.Fatalf("unexpected timeout/header defaults: %+v", srv)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/projects", strings.NewReader(`{"name":"too-large"}`))
+	res := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(res, req)
+	if res.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("large body status=%d body=%s", res.Code, res.Body.String())
+	}
+	if res.Header().Get("X-Content-Type-Options") != "nosniff" {
+		t.Fatalf("large body missing security headers: %+v", res.Header())
+	}
+
+	srv = New(Config{MaxBodyBytes: 64}, st, slog.Default())
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/projects", strings.NewReader(`{"name":"ok"}`))
+	res = httptest.NewRecorder()
+	srv.Handler.ServeHTTP(res, req)
+	if res.Code != http.StatusCreated {
+		t.Fatalf("small body status=%d body=%s", res.Code, res.Body.String())
 	}
 }
 

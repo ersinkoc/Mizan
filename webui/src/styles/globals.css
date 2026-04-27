@@ -649,6 +649,40 @@ textarea {
   min-height: 40px;
 }
 
+.audit-quickbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  border-top: 1px solid var(--border);
+  padding: 12px 14px 0;
+}
+
+.audit-quickbar button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border-color: color-mix(in srgb, var(--accent) 25%, var(--border));
+  min-height: 34px;
+  padding: 7px 10px;
+}
+
+.audit-quickbar button.active {
+  border-color: color-mix(in srgb, var(--accent) 65%, var(--border));
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 16%, var(--panel));
+}
+
+.audit-quickbar span {
+  display: inline-grid;
+  place-items: center;
+  min-width: 22px;
+  border-radius: 999px;
+  padding: 2px 6px;
+  color: var(--muted);
+  background: var(--input);
+  font-size: 12px;
+}
+
 .audit-list {
   display: grid;
   gap: 8px;
@@ -667,6 +701,11 @@ textarea {
 
 .audit-event.failed {
   border-left-color: var(--danger);
+}
+
+.audit-event.incident {
+  border-color: color-mix(in srgb, var(--danger) 55%, var(--border));
+  background: color-mix(in srgb, var(--danger) 8%, var(--input));
 }
 
 .audit-event.skipped {
@@ -688,6 +727,28 @@ textarea {
   margin: 4px 0 0;
   color: var(--warn);
   overflow-wrap: anywhere;
+}
+
+.audit-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-start;
+}
+
+.audit-meta span {
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+  border-radius: 999px;
+  padding: 3px 8px;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--accent) 7%, var(--input));
+  font-size: 12px;
+}
+
+.audit-meta span.danger {
+  border-color: color-mix(in srgb, var(--danger) 55%, var(--border));
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 9%, var(--input));
 }
 
 .targets-grid {
@@ -745,7 +806,7 @@ textarea {
   border-left: 5px solid var(--accent);
   border-radius: 8px;
   background: var(--input);
-  padding: 10px 48px 10px 12px;
+  padding: 10px 152px 10px 12px;
 }
 
 .target-card div,
@@ -808,9 +869,112 @@ textarea {
   overflow: auto;
 }
 
+.cluster-rollout-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: end;
+  margin-top: 4px;
+}
+
+.cluster-rollout-controls label {
+  display: grid;
+  gap: 3px;
+  min-width: 86px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.cluster-rollout-controls input {
+  min-height: 32px;
+}
+
+.cluster-rollout-controls button {
+  min-height: 32px;
+  padding: 0 10px;
+}
+
 .deploy-plan {
   border-top: 1px solid var(--border);
   padding: 14px;
+}
+
+.approval-panel {
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid var(--border);
+  padding: 14px;
+}
+
+.approval-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(120px, 180px);
+  gap: 10px;
+  align-items: end;
+}
+
+.approval-head div {
+  display: grid;
+  gap: 3px;
+}
+
+.approval-head span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.approval-list {
+  display: grid;
+  gap: 8px;
+}
+
+.approval-card {
+  position: relative;
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-left: 5px solid var(--warn);
+  border-radius: 8px;
+  background: var(--input);
+  padding: 10px 174px 10px 12px;
+}
+
+.approval-card.approved {
+  border-left-color: var(--accent);
+}
+
+.approval-card div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.approval-card strong,
+.approval-card span,
+.approval-card small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.approval-card span,
+.approval-card small {
+  color: var(--muted);
+}
+
+.approval-actions {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: flex;
+  gap: 6px;
+}
+
+.approval-actions button {
+  width: auto;
+  min-height: 32px;
+  padding: 0 10px;
 }
 
 .probe-status {
@@ -1014,5 +1178,26 @@ textarea {
   .snapshot-grid,
   .audit-filters {
     grid-template-columns: 1fr;
+  }
+
+  .approval-head {
+    grid-template-columns: 1fr;
+  }
+
+  .approval-card {
+    padding-right: 12px;
+  }
+
+  .target-card,
+  .cluster-card {
+    padding-right: 12px;
+  }
+
+  .target-card-actions {
+    position: static;
+  }
+
+  .approval-actions {
+    position: static;
   }
 }

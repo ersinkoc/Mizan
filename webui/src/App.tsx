@@ -27,6 +27,7 @@ import { connectEntities, moveEntity } from './lib/ir-mutations';
 import type {
   AuditEvent,
   AuditFilters,
+  ApprovalRequest,
   DeployResult,
   DiffChange,
   Engine,
@@ -37,6 +38,7 @@ import type {
   NativeResult,
   ProbeResult,
   ProjectMeta,
+  ProjectStreamEvent,
   TargetsResponse,
   ValidateResult
 } from './lib/types';
@@ -115,6 +117,15 @@ const defaultAuditFilters: AuditFilters = {
   target_engine: ''
 };
 
+type AuditQuickView = 'all' | 'deploys' | 'approvals' | 'incidents';
+
+const auditQuickViews: { id: AuditQuickView; label: string }[] = [
+  { id: 'all', label: 'All' },
+  { id: 'deploys', label: 'Deploys' },
+  { id: 'approvals', label: 'Approvals' },
+  { id: 'incidents', label: 'Incidents' }
+];
+
 export function App() {
   const [projects, setProjects] = useState<ProjectMeta[]>([]);
   const [active, setActive] = useState<ProjectMeta | null>(null);
@@ -127,8 +138,12 @@ export function App() {
   const [diffChanges, setDiffChanges] = useState<DiffChange[]>([]);
   const [audit, setAudit] = useState<AuditEvent[]>([]);
   const [auditFilters, setAuditFilters] = useState<AuditFilters>(defaultAuditFilters);
+  const [auditView, setAuditView] = useState<AuditQuickView>('all');
   const auditFiltersRef = useRef<AuditFilters>(defaultAuditFilters);
   const [targetsFile, setTargetsFile] = useState<TargetsResponse>({ targets: [], clusters: [] });
+  const [approvalRequests, setApprovalRequests] = useState<ApprovalRequest[]>([]);
+  const [approvalActor, setApprovalActor] = useState(() => localStorage.getItem('mizan-actor') ?? 'operator');
+  const [clusterBatches, setClusterBatches] = useState<Record<string, string>>({});
   const [deployResult, setDeployResult] = useState<DeployResult | null>(null);
   const [probeResult, setProbeResult] = useState<ProbeResult | null>(null);
   const [monitorSnapshot, setMonitorSnapshot] = useState<MonitorSnapshot | null>(null);
@@ -138,6 +153,12 @@ export function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [theme, setTheme] = useState(() => localStorage.getItem('mizan-theme') ?? 'dark');
+
+  const visibleAudit = useMemo(() => audit.filter((event) => auditMatchesQuickView(event, auditView)), [audit, auditView]);
+  const auditViewCounts = useMemo(() => auditQuickViews.reduce<Record<AuditQuickView, number>>((counts, view) => {
+    counts[view.id] = audit.filter((event) => auditMatchesQuickView(event, view.id)).length;
+    return counts;
+  }, { all: 0, deploys: 0, approvals: 0, incidents: 0 }), [audit]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -159,7 +180,10 @@ export function App() {
     setDiffChanges([]);
     setAudit([]);
     setAuditFilters(defaultAuditFilters);
+    setAuditView('all');
     setTargetsFile({ targets: [], clusters: [] });
+    setApprovalRequests([]);
+    setClusterBatches({});
     setDeployResult(null);
     setProbeResult(null);
     setMonitorSnapshot(null);
@@ -172,10 +196,11 @@ export function App() {
         void reloadSnapshots(active.id);
         void reloadAudit(active.id, defaultAuditFilters);
         void reloadTargets(active.id);
+        void reloadApprovals(active.id);
         void reloadMonitor(active.id);
       })
       .catch((err: Error) => setError(err.message));
-  }, [active]);
+  }, [active?.id]);
 
   useEffect(() => {
     if (!active || typeof EventSource === 'undefined') {
@@ -207,6 +232,33 @@ export function App() {
     }
     setAuditStream('connecting');
     const source = new EventSource(api.projectEventsURL(active.id));
+    const onProject = (event: Event) => {
+      try {
+        const item = JSON.parse((event as MessageEvent<string>).data) as ProjectStreamEvent;
+        setProjects((items) => [item.project, ...items.filter((project) => project.id !== item.project.id)]);
+        setActive((current) => (current?.id === item.project.id ? item.project : current));
+        void reloadSnapshots(item.project.id);
+        setAuditStream('live');
+      } catch (err) {
+        setAuditStream('error');
+      }
+    };
+    const onTargets = (event: Event) => {
+      try {
+        setTargetsFile(JSON.parse((event as MessageEvent<string>).data) as TargetsResponse);
+        setAuditStream('live');
+      } catch (err) {
+        setAuditStream('error');
+      }
+    };
+    const onApprovals = (event: Event) => {
+      try {
+        setApprovalRequests(JSON.parse((event as MessageEvent<string>).data) as ApprovalRequest[]);
+        setAuditStream('live');
+      } catch (err) {
+        setAuditStream('error');
+      }
+    };
     const onAudit = (event: Event) => {
       try {
         const item = JSON.parse((event as MessageEvent<string>).data) as AuditEvent;
@@ -218,9 +270,15 @@ export function App() {
         setAuditStream('error');
       }
     };
+    source.addEventListener('project', onProject);
+    source.addEventListener('targets', onTargets);
+    source.addEventListener('approvals', onApprovals);
     source.addEventListener('audit', onAudit);
     source.onerror = () => setAuditStream('error');
     return () => {
+      source.removeEventListener('project', onProject);
+      source.removeEventListener('targets', onTargets);
+      source.removeEventListener('approvals', onApprovals);
       source.removeEventListener('audit', onAudit);
       source.close();
     };
@@ -267,6 +325,7 @@ export function App() {
       await reloadSnapshots(created.project.id);
       await reloadAudit(created.project.id);
       await reloadTargets(created.project.id);
+      await reloadApprovals(created.project.id);
       await reloadMonitor(created.project.id);
     } catch (err) {
       setError((err as Error).message);
@@ -292,6 +351,7 @@ export function App() {
       await reloadSnapshots(imported.project.id);
       await reloadAudit(imported.project.id);
       await reloadTargets(imported.project.id);
+      await reloadApprovals(imported.project.id);
       await reloadMonitor(imported.project.id);
     } catch (err) {
       setError((err as Error).message);
@@ -346,7 +406,7 @@ export function App() {
   function exportAuditCSV() {
     if (!active) return;
     const link = document.createElement('a');
-    link.href = api.auditCSVURL(active.id, { ...auditFilters, limit: 1000 });
+    link.href = api.auditCSVURL(active.id, auditFiltersForQuickView({ ...auditFilters, limit: 1000 }, auditView));
     link.download = `${active.name.replace(/[^a-z0-9_-]+/gi, '-').replace(/^-+|-+$/g, '') || active.id}-audit.csv`;
     document.body.appendChild(link);
     link.click();
@@ -356,6 +416,11 @@ export function App() {
   async function reloadTargets(projectID = active?.id ?? '') {
     if (!projectID) return;
     setTargetsFile(await api.listTargets(projectID));
+  }
+
+  async function reloadApprovals(projectID = active?.id ?? '') {
+    if (!projectID) return;
+    setApprovalRequests(await api.listApprovals(projectID));
   }
 
   async function reloadMonitor(projectID = active?.id ?? '') {
@@ -376,11 +441,13 @@ export function App() {
         engine: String(formData.get('engine') || 'haproxy') as Engine,
         config_path: String(formData.get('config_path') || ''),
         reload_command: String(formData.get('reload_command') || ''),
+        rollback_command: String(formData.get('rollback_command') || ''),
         sudo: formData.get('sudo') === 'on',
         post_reload_probe: String(formData.get('post_reload_probe') || ''),
         monitor_endpoint: String(formData.get('monitor_endpoint') || '')
       });
       await reloadTargets(active.id);
+      await reloadApprovals(active.id);
       await reloadMonitor(active.id);
       await reloadAudit(active.id);
     } catch (err) {
@@ -397,6 +464,7 @@ export function App() {
     try {
       await api.deleteTarget(active.id, targetID);
       await reloadTargets(active.id);
+      await reloadApprovals(active.id);
       await reloadMonitor(active.id);
       await reloadAudit(active.id);
     } catch (err) {
@@ -415,9 +483,11 @@ export function App() {
         name: String(formData.get('name') || ''),
         target_ids: formData.getAll('target_id').map(String),
         parallelism: Number(formData.get('parallelism') || 1),
-        gate_on_failure: formData.get('gate_on_failure') === 'on'
+        gate_on_failure: formData.get('gate_on_failure') === 'on',
+        required_approvals: Number(formData.get('required_approvals') || 0)
       });
       await reloadTargets(active.id);
+      await reloadApprovals(active.id);
       await reloadAudit(active.id);
     } catch (err) {
       setError((err as Error).message);
@@ -433,6 +503,7 @@ export function App() {
     try {
       await api.deleteCluster(active.id, clusterID);
       await reloadTargets(active.id);
+      await reloadApprovals(active.id);
       await reloadAudit(active.id);
     } catch (err) {
       setError((err as Error).message);
@@ -447,6 +518,60 @@ export function App() {
     setError('');
     try {
       const result = await api.deploy(active.id, { target_id: targetID, dry_run: true });
+      setDeployResult(result);
+      await reloadAudit(active.id);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function createApprovalRequest(scope: { target_id?: string; cluster_id?: string; batch?: number }) {
+    if (!active) return;
+    setBusy(true);
+    setError('');
+    try {
+      await api.createApproval(active.id, scope);
+      await reloadApprovals(active.id);
+      await reloadAudit(active.id);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function approveRequest(approvalID: string) {
+    if (!active) return;
+    const actor = approvalActor.trim();
+    if (!actor) {
+      setError('approval actor is required');
+      return;
+    }
+    setBusy(true);
+    setError('');
+    localStorage.setItem('mizan-actor', actor);
+    try {
+      await api.approveApproval(active.id, approvalID, actor);
+      await reloadApprovals(active.id);
+      await reloadAudit(active.id);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deployWithApproval(approvalID: string, execute = false) {
+    if (!active) return;
+    if (execute && !window.confirm('Execute this approved rollout over SSH now?')) {
+      return;
+    }
+    setBusy(true);
+    setError('');
+    try {
+      const result = await api.deploy(active.id, { approval_request_id: approvalID, dry_run: !execute });
       setDeployResult(result);
       await reloadAudit(active.id);
     } catch (err) {
@@ -471,12 +596,21 @@ export function App() {
     }
   }
 
-  async function previewDeployCluster(clusterID: string) {
+  function clusterBatch(clusterID: string) {
+    const raw = Number(clusterBatches[clusterID] || 0);
+    return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 0;
+  }
+
+  function updateClusterBatch(clusterID: string, batch: string) {
+    setClusterBatches((items) => ({ ...items, [clusterID]: batch }));
+  }
+
+  async function previewDeployCluster(clusterID: string, batch = 0) {
     if (!active) return;
     setBusy(true);
     setError('');
     try {
-      const result = await api.deploy(active.id, { cluster_id: clusterID, dry_run: true });
+      const result = await api.deploy(active.id, { cluster_id: clusterID, batch, dry_run: true });
       setDeployResult(result);
       await reloadAudit(active.id);
     } catch (err) {
@@ -738,6 +872,7 @@ export function App() {
               </select>
               <input name="config_path" placeholder="/etc/haproxy/haproxy.cfg" aria-label="Remote config path" />
               <input name="reload_command" placeholder="systemctl reload haproxy" aria-label="Reload command" />
+              <input name="rollback_command" placeholder="cp /etc/haproxy/haproxy.cfg.bak /etc/haproxy/haproxy.cfg && systemctl reload haproxy" aria-label="Rollback command" />
               <input name="post_reload_probe" placeholder="https://edge.example.com/healthz" aria-label="Post reload probe" />
               <input name="monitor_endpoint" placeholder="https://edge.example.com/haproxy?stats;csv" aria-label="Monitor endpoint" />
               <label className="check-line"><input type="checkbox" name="sudo" /> Use sudo</label>
@@ -755,12 +890,16 @@ export function App() {
                   <small>{item.engine} to {item.config_path}</small>
                   {item.monitor_endpoint && <small>monitor {item.monitor_endpoint}</small>}
                   <code>{item.reload_command}</code>
+                  {item.rollback_command && <code>{item.rollback_command}</code>}
                   <div className="target-card-actions">
                     <button onClick={() => probeTarget(item.id)} disabled={busy} title="Test target probe">
                       <ShieldCheck size={15} />
                     </button>
                     <button onClick={() => previewDeployTarget(item.id)} disabled={busy} title="Preview deployment">
                       <UploadCloud size={15} />
+                    </button>
+                    <button onClick={() => createApprovalRequest({ target_id: item.id })} disabled={busy} title="Request approval">
+                      <CheckCircle2 size={15} />
                     </button>
                     <button onClick={() => deleteTarget(item.id)} disabled={busy} title="Delete target">
                       <Trash2 size={15} />
@@ -774,6 +913,7 @@ export function App() {
               <h3>Cluster</h3>
               <input name="name" placeholder="production-edge" aria-label="Cluster name" />
               <input name="parallelism" type="number" min="1" placeholder="1" aria-label="Deployment parallelism" />
+              <input name="required_approvals" type="number" min="0" placeholder="2" aria-label="Required deployment approvals" />
               <label className="check-line"><input type="checkbox" name="gate_on_failure" defaultChecked /> Gate on failure</label>
               <div className="cluster-targets">
                 {targetsFile.targets.map((item) => (
@@ -794,11 +934,27 @@ export function App() {
                     <strong>{item.name}</strong>
                     <span>{item.target_ids.length} target(s), parallelism {item.parallelism}</span>
                   </div>
-                  <small>{item.gate_on_failure ? 'Stops on first failed deployment' : 'Continues after failures'}</small>
-                  <div className="target-card-actions">
-                    <button onClick={() => previewDeployCluster(item.id)} disabled={busy} title="Preview deployment">
-                      <UploadCloud size={15} />
+                  <small>{item.gate_on_failure ? 'Stops on first failed deployment' : 'Continues after failures'}{item.required_approvals ? ` / ${item.required_approvals} approval(s)` : ''}</small>
+                  <div className="cluster-rollout-controls">
+                    <label>
+                      <span>Batch</span>
+                      <input
+                        type="number"
+                        min="0"
+                        placeholder="all"
+                        value={clusterBatches[item.id] ?? ''}
+                        onChange={(event) => updateClusterBatch(item.id, event.target.value)}
+                        aria-label={`Rollout batch for ${item.name}`}
+                      />
+                    </label>
+                    <button onClick={() => previewDeployCluster(item.id, clusterBatch(item.id))} disabled={busy} title="Preview deployment">
+                      <UploadCloud size={15} /> Preview
                     </button>
+                    <button onClick={() => createApprovalRequest({ cluster_id: item.id, batch: clusterBatch(item.id) })} disabled={busy} title="Request approval">
+                      <CheckCircle2 size={15} /> Request
+                    </button>
+                  </div>
+                  <div className="target-card-actions">
                     <button onClick={() => deleteCluster(item.id)} disabled={busy} title="Delete cluster">
                       <Trash2 size={15} />
                     </button>
@@ -807,6 +963,16 @@ export function App() {
               )) : <p className="muted">No clusters yet.</p>}
             </div>
           </div>
+          <ApprovalPanel
+            approvals={approvalRequests}
+            targets={targetsFile}
+            actor={approvalActor}
+            busy={busy}
+            onActorChange={setApprovalActor}
+            onApprove={approveRequest}
+            onPreview={(id) => deployWithApproval(id, false)}
+            onExecute={(id) => deployWithApproval(id, true)}
+          />
           <ProbeStatus result={probeResult} />
           <DeployPlan result={deployResult} />
         </section>
@@ -919,7 +1085,21 @@ export function App() {
               Reset
             </button>
           </form>
-          <AuditList events={audit} />
+          <div className="audit-quickbar" aria-label="Audit quick filters">
+            {auditQuickViews.map((view) => (
+              <button
+                key={view.id}
+                type="button"
+                className={auditView === view.id ? 'active' : ''}
+                aria-pressed={auditView === view.id}
+                onClick={() => setAuditView(view.id)}
+              >
+                {view.label}
+                <span>{auditViewCounts[view.id]}</span>
+              </button>
+            ))}
+          </div>
+          <AuditList events={visibleAudit} total={audit.length} />
         </section>
       </section>
     </main>
@@ -973,6 +1153,15 @@ function DeployPlan({ result }: { result: DeployResult | null }) {
         <strong>{result.dry_run ? 'Dry-run deployment plan' : 'Deployment run'}</strong>
         <span>{result.status} / {result.steps.length} steps / {result.snapshot_hash.slice(0, 12)}</span>
       </div>
+      {(result.required_approvals || result.approved_by?.length) && (
+        <small>{result.approved_by?.length ?? 0}/{result.required_approvals ?? 0} approval(s){result.approved_by?.length ? `: ${result.approved_by.join(', ')}` : ''}</small>
+      )}
+      {result.rollback.planned > 0 && (
+        <small>
+          rollback: {result.rollback.planned} planned
+          {result.rollback.attempted ? ` / ${result.rollback.succeeded} succeeded / ${result.rollback.failed} failed` : ' / dry-run only'}
+        </small>
+      )}
       <div className="deploy-steps">
         {result.steps.map((step, index) => (
           <article key={`${step.target_id}-${step.stage}-${index}`} className={`deploy-step ${step.status}`}>
@@ -986,6 +1175,81 @@ function DeployPlan({ result }: { result: DeployResult | null }) {
           </article>
         ))}
       </div>
+    </div>
+  );
+}
+
+function ApprovalPanel({
+  approvals,
+  targets,
+  actor,
+  busy,
+  onActorChange,
+  onApprove,
+  onPreview,
+  onExecute
+}: {
+  approvals: ApprovalRequest[];
+  targets: TargetsResponse;
+  actor: string;
+  busy: boolean;
+  onActorChange: (actor: string) => void;
+  onApprove: (id: string) => void;
+  onPreview: (id: string) => void;
+  onExecute: (id: string) => void;
+}) {
+  const targetNames = new Map(targets.targets.map((target) => [target.id, target.name]));
+  const clusterNames = new Map(targets.clusters.map((cluster) => [cluster.id, cluster.name]));
+
+  return (
+    <div className="approval-panel">
+      <div className="approval-head">
+        <div>
+          <strong>Approval Requests</strong>
+          <span>Snapshot-bound rollout gates</span>
+        </div>
+        <input
+          value={actor}
+          onChange={(event) => onActorChange(event.target.value)}
+          placeholder="operator"
+          aria-label="Approval actor"
+        />
+      </div>
+      {approvals.length ? (
+        <div className="approval-list">
+          {approvals.map((approval) => {
+            const scope = approval.target_id
+              ? `target ${targetNames.get(approval.target_id) ?? approval.target_id}`
+              : `cluster ${clusterNames.get(approval.cluster_id ?? '') ?? approval.cluster_id}`;
+            const approved = approval.approvals.length;
+            const ready = approval.status === 'approved';
+            return (
+              <article key={approval.id} className={`approval-card ${approval.status}`}>
+                <div>
+                  <strong>{scope}</strong>
+                  <span>{approved}/{approval.required_approvals} approval(s) / {approval.snapshot_hash.slice(0, 12)}{approval.batch ? ` / batch ${approval.batch}` : ''}</span>
+                </div>
+                {approval.approvals.length > 0 && (
+                  <small>{approval.approvals.map((item) => item.actor).join(', ')}</small>
+                )}
+                <div className="approval-actions">
+                  <button onClick={() => onApprove(approval.id)} disabled={busy || ready} title="Approve request">
+                    <ShieldCheck size={15} />
+                  </button>
+                  <button onClick={() => onPreview(approval.id)} disabled={busy} title="Preview approved request">
+                    <UploadCloud size={15} />
+                  </button>
+                  <button onClick={() => onExecute(approval.id)} disabled={busy || !ready} title="Execute approved request">
+                    Execute
+                  </button>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      ) : (
+        <p className="muted">No approval requests yet. Use the check button on a target or cluster to create one.</p>
+      )}
     </div>
   );
 }
@@ -1073,24 +1337,129 @@ function Metric({ icon, label, value }: { icon: React.ReactNode; label: string; 
   );
 }
 
-function AuditList({ events }: { events: AuditEvent[] }) {
+function AuditList({ events, total }: { events: AuditEvent[]; total: number }) {
   if (!events.length) {
-    return <div className="audit-empty">No audit events yet.</div>;
+    return <div className="audit-empty">{total ? 'No audit events match this view.' : 'No audit events yet.'}</div>;
   }
   return (
     <div className="audit-list">
-      {events.slice(0, 12).map((event) => (
-        <article key={event.event_id} className={`audit-event ${event.outcome}`}>
-          <div>
-            <strong>{event.action}</strong>
-            <span>{new Date(event.timestamp).toLocaleString()}</span>
-          </div>
-          <small>{event.actor}{event.target_engine ? ` / ${event.target_engine}` : ''}{event.ir_snapshot_hash ? ` / ${event.ir_snapshot_hash.slice(0, 12)}` : ''}</small>
-          {event.error_message && <p>{event.error_message}</p>}
-        </article>
-      ))}
+      {events.slice(0, 12).map((event) => {
+        const summary = auditSummary(event);
+        return (
+          <article key={event.event_id} className={`audit-event ${event.outcome} ${summary.incident ? 'incident' : ''}`}>
+            <div>
+              <strong>{event.action}</strong>
+              <span>{new Date(event.timestamp).toLocaleString()}</span>
+            </div>
+            <small>{event.actor}{event.target_engine ? ` / ${event.target_engine}` : ''}{event.ir_snapshot_hash ? ` / ${event.ir_snapshot_hash.slice(0, 12)}` : ''}</small>
+            {summary.items.length > 0 && (
+              <div className="audit-meta">
+                {summary.items.map((item) => (
+                  <span key={item} className={item.includes('failed') ? 'danger' : ''}>{item}</span>
+                ))}
+              </div>
+            )}
+            {event.error_message && <p>{event.error_message}</p>}
+          </article>
+        );
+      })}
     </div>
   );
+}
+
+function auditSummary(event: AuditEvent) {
+  const metadata = event.metadata ?? {};
+  const items: string[] = [];
+  let incident = event.outcome === 'failed';
+  const targetID = metaString(metadata, 'target_id');
+  const clusterID = metaString(metadata, 'cluster_id');
+  const batch = metaNumber(metadata, 'batch');
+  const requestID = metaString(metadata, 'approval_request_id');
+  const rollback = metaRecord(metadata, 'rollback');
+  const requiredApprovals = metaNumber(metadata, 'required_approvals');
+  const approvals = metaNumber(metadata, 'approvals');
+  const status = metaString(metadata, 'status');
+  const dryRun = metaBoolean(metadata, 'dry_run');
+
+  if (targetID) items.push(`target ${shortID(targetID)}`);
+  if (clusterID) items.push(`cluster ${shortID(clusterID)}`);
+  if (batch > 0) items.push(`batch ${batch}`);
+  if (requestID) items.push(`approval ${shortID(requestID)}`);
+  if (typeof dryRun === 'boolean') items.push(dryRun ? 'dry-run' : 'execute');
+  if (requiredApprovals > 0 && event.action !== 'deploy.run') {
+    items.push(`approvals ${approvals}/${requiredApprovals}`);
+  }
+  if (status) items.push(`request ${status}`);
+  if (rollback) {
+    const planned = metaNumber(rollback, 'planned');
+    const attempted = metaNumber(rollback, 'attempted');
+    const succeeded = metaNumber(rollback, 'succeeded');
+    const failed = metaNumber(rollback, 'failed');
+    if (planned > 0) {
+      items.push(`rollback ${planned} planned`);
+    }
+    if (attempted > 0) {
+      items.push(`rollback ${attempted} attempted`);
+    }
+    if (succeeded > 0) {
+      items.push(`rollback ${succeeded} succeeded`);
+    }
+    if (failed > 0) {
+      items.push(`rollback ${failed} failed`);
+      incident = true;
+    }
+  }
+  return { items, incident };
+}
+
+function auditMatchesQuickView(event: AuditEvent, view: AuditQuickView) {
+  switch (view) {
+    case 'deploys':
+      return event.action === 'deploy.run';
+    case 'approvals':
+      return event.action.startsWith('approval.');
+    case 'incidents':
+      return auditSummary(event).incident;
+    default:
+      return true;
+  }
+}
+
+function auditFiltersForQuickView(filters: AuditFilters, view: AuditQuickView): AuditFilters {
+  switch (view) {
+    case 'deploys':
+      return { ...filters, action: 'deploy.run' };
+    case 'approvals':
+      return { ...filters, action: '', action_prefix: 'approval.' };
+    case 'incidents':
+      return { ...filters, incident: true };
+    default:
+      return filters;
+  }
+}
+
+function metaRecord(metadata: Record<string, unknown>, key: string) {
+  const value = metadata[key];
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+function metaString(metadata: Record<string, unknown>, key: string) {
+  const value = metadata[key];
+  return typeof value === 'string' ? value : '';
+}
+
+function metaNumber(metadata: Record<string, unknown>, key: string) {
+  const value = metadata[key];
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+function metaBoolean(metadata: Record<string, unknown>, key: string) {
+  const value = metadata[key];
+  return typeof value === 'boolean' ? value : undefined;
+}
+
+function shortID(value: string) {
+  return value.length > 12 ? value.slice(0, 12) : value;
 }
 
 function auditMatchesFilters(event: AuditEvent, filters: AuditFilters) {
