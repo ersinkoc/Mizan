@@ -227,6 +227,14 @@ When `cosign` is available, verify the keyless Sigstore signatures as well:
 .\scripts\verify-release.ps1 -Tag v0.1.6 -VerifySignatures
 ```
 
+On a workstation without `cosign`, install the pinned verifier and pass the resolved path explicitly:
+
+```powershell
+.\scripts\install-cosign.ps1
+$cosign = Join-Path (go env GOPATH) 'bin\cosign.exe'
+.\scripts\verify-release.ps1 -Tag v0.1.6 -VerifySignatures -CosignPath $cosign
+```
+
 `make release-check` runs GitHub Actions workflow lint, backend coverage, frontend coverage, browser E2E, Go/npm vulnerability scans, the embedded binary build, and high/critical Docker Scout gates for both runtime images. CI runs the same actionlint check against GitHub Actions workflow files. If Docker is unavailable on a local workstation, run the non-container gates directly and rely on CI's Anchore/Grype image scan.
 
 CI fails the container job on critical or high CVEs for both `runtime` and `runtime-ssh`. Medium findings remain visible in the scanner output so operators can track base-image remediation without blocking routine builds.

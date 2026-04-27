@@ -215,6 +215,14 @@ If `cosign` is installed, also verify the keyless Sigstore signatures:
 .\scripts\verify-release.ps1 -Tag v0.1.6 -VerifySignatures
 ```
 
+To install the pinned local verification tool with Go:
+
+```powershell
+.\scripts\install-cosign.ps1
+$cosign = Join-Path (go env GOPATH) 'bin\cosign.exe'
+.\scripts\verify-release.ps1 -Tag v0.1.6 -VerifySignatures -CosignPath $cosign
+```
+
 Current verified gates:
 
 | Area | Status |
