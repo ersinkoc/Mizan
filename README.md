@@ -108,6 +108,7 @@ go run ./cmd/mizan deploy --project <id> --cluster-id <cluster-id> --batch 1 --e
 go run ./cmd/mizan secret list
 go run ./cmd/mizan monitor snapshot --project <id>
 go run ./cmd/mizan monitor stream --project <id> --limit 10 --interval 5s
+go run ./cmd/mizan version --json
 ```
 
 ## Build
@@ -209,6 +210,8 @@ Current verified gates:
 | Container high/critical scan | Anchore/Grype CI gate pass; Docker Scout local gate pass |
 
 Frontend coverage is scoped to `webui/src/lib/**/*.ts` in `webui/vitest.config.ts`; backend coverage is measured across `./...`.
+
+For release or deployment scripts, use `mizan version --json` to verify the embedded `version`, `commit`, and `date` metadata before rollout.
 
 ## Architecture
 

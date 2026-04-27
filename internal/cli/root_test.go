@@ -30,6 +30,17 @@ func TestRunVersionAndUnknown(t *testing.T) {
 	if !bytes.Contains(stdout.Bytes(), []byte("mizan")) {
 		t.Fatalf("unexpected version output: %s", stdout.String())
 	}
+	stdout.Reset()
+	if err := Run(context.Background(), []string{"version", "--json"}, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	var metadata map[string]string
+	if err := json.Unmarshal(stdout.Bytes(), &metadata); err != nil {
+		t.Fatalf("version --json output is not JSON: %v\n%s", err, stdout.String())
+	}
+	if metadata["version"] == "" || metadata["commit"] == "" || metadata["date"] == "" {
+		t.Fatalf("missing version metadata: %#v", metadata)
+	}
 	if err := Run(context.Background(), []string{"nope"}, &stdout, &stderr); err == nil {
 		t.Fatal("expected unknown command error")
 	}

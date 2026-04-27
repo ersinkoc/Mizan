@@ -168,6 +168,7 @@ mizan approval approve --project <id> --actor bob <approval-request-id>
 mizan deploy --project <id> --approval-request-id <approval-request-id> --execute
 mizan deploy --project <id> --cluster-id <cluster-id> --batch 1 --execute --confirm-snapshot <snapshot_hash> --approved-by alice,bob
 mizan monitor snapshot --project <id>
+mizan version --json
 ```
 
 Use the `snapshot_hash` from the dry-run deployment result as the `--confirm-snapshot` value. If the project changes between preview and execution, Mizan rejects the execute request and forces a fresh dry run.
@@ -218,6 +219,8 @@ make release-check
 CI fails the container job on critical or high CVEs for both `runtime` and `runtime-ssh`. Medium findings remain visible in the scanner output so operators can track base-image remediation without blocking routine builds.
 
 The release workflow runs when a `v*` tag is pushed, and it can also be started manually from GitHub Actions. Tag-triggered releases build cross-platform binaries, embed the release version/commit/date metadata, upload build artifacts, and publish a GitHub Release containing each binary plus its SHA-256 checksum, keyless Sigstore signature, and signing certificate. Before tagging a release, verify the generated binary embeds the current WebUI and returns the expected `/version` metadata.
+
+Release and deployment automation can also run `mizan version --json` against a candidate binary to assert the embedded `version`, `commit`, and `date` values before installation.
 
 ## Supported Scope Boundaries
 

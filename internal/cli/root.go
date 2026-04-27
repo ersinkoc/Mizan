@@ -80,8 +80,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	case "serve":
 		return serve(ctx, args[1:], stdout, stderr)
 	case "version":
-		_, _ = fmt.Fprintf(stdout, "mizan %s (%s %s)\n", version.Version, version.Commit, version.Date)
-		return nil
+		return versionCmd(args[1:], stdout, stderr)
 	case "project":
 		return project(ctx, args[1:], stdout, stderr)
 	case "snapshot":
@@ -112,6 +111,24 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		usage(stderr)
 		return fmt.Errorf("unknown command %q", args[0])
 	}
+}
+
+func versionCmd(args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("version", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	jsonOutput := fs.Bool("json", false, "write version metadata as JSON")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *jsonOutput {
+		return json.NewEncoder(stdout).Encode(map[string]string{
+			"version": version.Version,
+			"commit":  version.Commit,
+			"date":    version.Date,
+		})
+	}
+	_, _ = fmt.Fprintf(stdout, "mizan %s (%s %s)\n", version.Version, version.Commit, version.Date)
+	return nil
 }
 
 type redactedSecret struct {
@@ -1676,5 +1693,5 @@ Usage:
   mizan doctor
   mizan monitor snapshot --project <id>
   mizan monitor stream --project <id> [--limit 10]
-  mizan version`)
+  mizan version [--json]`)
 }

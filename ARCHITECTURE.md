@@ -355,6 +355,7 @@ mizan approval approve --project <id> --actor alice <approval-request-id>
 mizan deploy --project <id> --approval-request-id <approval-request-id> --execute
 mizan monitor snapshot --project <id>
 mizan monitor stream --project <id> --limit 10 --interval 5s
+mizan version --json
 ```
 
 Targets and clusters can also be managed from the CLI:
