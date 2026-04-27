@@ -639,10 +639,15 @@ textarea {
 
 .audit-filters {
   display: grid;
-  grid-template-columns: repeat(6, minmax(110px, 1fr)) auto auto;
+  grid-template-columns: repeat(4, minmax(130px, 1fr));
   gap: 8px;
   border-top: 1px solid var(--border);
   padding: 12px 14px 0;
+}
+
+.audit-filter-actions {
+  display: flex;
+  gap: 8px;
 }
 
 .audit-filters button {

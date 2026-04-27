@@ -2,7 +2,7 @@
 
 Mizan is a local-first visual configuration architect for HAProxy and Nginx. It runs as a single Go binary, serves an embedded React/Vite WebUI, stores projects as inspectable JSON under `~/.mizan`, and translates one Universal IR into target-specific HAProxy or Nginx configuration.
 
-The current codebase is a working product foundation with backend statement coverage at 96.7%.
+The current codebase is release-ready for the documented v0.1 scope with backend statement coverage at 96.7%, browser E2E coverage for the main operator workflow, clean Go/npm vulnerability scans, and a high/critical container CVE gate.
 
 ## What Works Today
 
@@ -132,8 +132,15 @@ go build -o dist/mizan.exe ./cmd/mizan
 Container image:
 
 ```sh
-docker build -t mizan:local .
+make ui
+docker build --target runtime -t mizan:local .
 docker run --rm -p 127.0.0.1:7890:7890 -v mizan-data:/var/lib/mizan -e MIZAN_AUTH_TOKEN=change-me mizan:local
+```
+
+The default container target is the minimal UI/API runtime and intentionally excludes `openssh-client`. Build the SSH-capable runtime when the container itself must execute remote deployments:
+
+```sh
+docker build --target runtime-ssh -t mizan:ssh-local .
 ```
 
 Deployment examples live under `deploy/`:
@@ -163,6 +170,18 @@ npm run build
 npm audit --audit-level=low
 ```
 
+Container high/critical gate:
+
+```sh
+make container-scan
+```
+
+Full release gate:
+
+```sh
+make release-check
+```
+
 Current verified gates:
 
 | Area | Status |
@@ -176,6 +195,7 @@ Current verified gates:
 | Browser E2E workflow | Playwright Chromium pass: import, edit, validate, batch approval, rollback dry-run, audit, monitor |
 | Full npm audit | 0 vulnerabilities |
 | Go vulnerability scan | govulncheck pass: 0 vulnerabilities |
+| Container high/critical scan | Anchore/Grype CI gate pass; Docker Scout local gate pass |
 
 Frontend coverage is scoped to `webui/src/lib/**/*.ts` in `webui/vitest.config.ts`; backend coverage is measured across `./...`.
 
@@ -183,4 +203,4 @@ Frontend coverage is scoped to `webui/src/lib/**/*.ts` in `webui/vitest.config.t
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the current architecture, request flows, storage layout, coverage status, and Mermaid diagrams.
 
-For production hardening and the remaining readiness checklist, see [docs/PRODUCTION.md](docs/PRODUCTION.md).
+For production hardening, release gates, and supported scope boundaries, see [docs/PRODUCTION.md](docs/PRODUCTION.md).

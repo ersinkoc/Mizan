@@ -113,8 +113,12 @@ const samplePatch = (model: Model): Model => ({
 const defaultAuditFilters: AuditFilters = {
   actor: '',
   action: '',
+  action_prefix: '',
   outcome: '',
-  target_engine: ''
+  target_engine: '',
+  target_id: '',
+  cluster_id: '',
+  approval_request_id: ''
 };
 
 type AuditQuickView = 'all' | 'deploys' | 'approvals' | 'incidents';
@@ -1051,13 +1055,21 @@ export function App() {
             />
             <input
               placeholder="Actor"
+              aria-label="Audit actor"
               value={auditFilters.actor ?? ''}
               onChange={(event) => setAuditFilters((filters) => ({ ...filters, actor: event.target.value }))}
             />
             <input
               placeholder="Action"
+              aria-label="Audit action"
               value={auditFilters.action ?? ''}
               onChange={(event) => setAuditFilters((filters) => ({ ...filters, action: event.target.value }))}
+            />
+            <input
+              placeholder="Action prefix"
+              aria-label="Audit action prefix"
+              value={auditFilters.action_prefix ?? ''}
+              onChange={(event) => setAuditFilters((filters) => ({ ...filters, action_prefix: event.target.value }))}
             />
             <select
               aria-label="Audit outcome"
@@ -1078,12 +1090,67 @@ export function App() {
               <option value="haproxy">HAProxy</option>
               <option value="nginx">Nginx</option>
             </select>
-            <button disabled={!active || busy}>
-              <RefreshCw size={15} /> Apply
-            </button>
-            <button type="button" disabled={!active || busy} onClick={clearAuditFilters}>
-              Reset
-            </button>
+            <input
+              placeholder="Target ID"
+              aria-label="Audit target ID"
+              value={auditFilters.target_id ?? ''}
+              onChange={(event) => setAuditFilters((filters) => ({ ...filters, target_id: event.target.value }))}
+            />
+            <input
+              placeholder="Cluster ID"
+              aria-label="Audit cluster ID"
+              value={auditFilters.cluster_id ?? ''}
+              onChange={(event) => setAuditFilters((filters) => ({ ...filters, cluster_id: event.target.value }))}
+            />
+            <input
+              placeholder="Approval request ID"
+              aria-label="Audit approval request ID"
+              value={auditFilters.approval_request_id ?? ''}
+              onChange={(event) => setAuditFilters((filters) => ({ ...filters, approval_request_id: event.target.value }))}
+            />
+            <input
+              type="number"
+              min="1"
+              placeholder="Batch"
+              aria-label="Audit batch"
+              value={auditFilters.batch ?? ''}
+              onChange={(event) => setAuditFilters((filters) => ({ ...filters, batch: event.target.value ? Number(event.target.value) : undefined }))}
+            />
+            <select
+              aria-label="Audit dry-run"
+              value={auditFilters.dry_run === undefined ? '' : String(auditFilters.dry_run)}
+              onChange={(event) => setAuditFilters((filters) => ({ ...filters, dry_run: event.target.value === '' ? undefined : event.target.value === 'true' }))}
+            >
+              <option value="">Any mode</option>
+              <option value="true">Dry-run only</option>
+              <option value="false">Execute only</option>
+            </select>
+            <select
+              aria-label="Audit incident"
+              value={auditFilters.incident === undefined ? '' : String(auditFilters.incident)}
+              onChange={(event) => setAuditFilters((filters) => ({ ...filters, incident: event.target.value === '' ? undefined : event.target.value === 'true' }))}
+            >
+              <option value="">Any incident</option>
+              <option value="true">Incidents only</option>
+              <option value="false">Non-incidents</option>
+            </select>
+            <select
+              aria-label="Audit rollback failed"
+              value={auditFilters.rollback_failed === undefined ? '' : String(auditFilters.rollback_failed)}
+              onChange={(event) => setAuditFilters((filters) => ({ ...filters, rollback_failed: event.target.value === '' ? undefined : event.target.value === 'true' }))}
+            >
+              <option value="">Any rollback</option>
+              <option value="true">Rollback failed</option>
+              <option value="false">Rollback clean</option>
+            </select>
+            <div className="audit-filter-actions">
+              <button disabled={!active || busy}>
+                <RefreshCw size={15} /> Apply
+              </button>
+              <button type="button" disabled={!active || busy} onClick={clearAuditFilters}>
+                Reset
+              </button>
+            </div>
           </form>
           <div className="audit-quickbar" aria-label="Audit quick filters">
             {auditQuickViews.map((view) => (
@@ -1412,6 +1479,11 @@ function auditSummary(event: AuditEvent) {
   return { items, incident };
 }
 
+function auditRollbackFailed(event: AuditEvent) {
+  const rollback = metaRecord(event.metadata ?? {}, 'rollback');
+  return rollback ? metaNumber(rollback, 'failed') > 0 : false;
+}
+
 function auditMatchesQuickView(event: AuditEvent, view: AuditQuickView) {
   switch (view) {
     case 'deploys':
@@ -1463,6 +1535,7 @@ function shortID(value: string) {
 }
 
 function auditMatchesFilters(event: AuditEvent, filters: AuditFilters) {
+  const metadata = event.metadata ?? {};
   const timestamp = new Date(event.timestamp).getTime();
   if (filters.from && timestamp < new Date(filters.from).getTime()) {
     return false;
@@ -1476,10 +1549,34 @@ function auditMatchesFilters(event: AuditEvent, filters: AuditFilters) {
   if (filters.action && event.action !== filters.action) {
     return false;
   }
+  if (filters.action_prefix && !event.action.startsWith(filters.action_prefix)) {
+    return false;
+  }
   if (filters.outcome && event.outcome !== filters.outcome) {
     return false;
   }
   if (filters.target_engine && event.target_engine !== filters.target_engine) {
+    return false;
+  }
+  if (filters.target_id && metaString(metadata, 'target_id') !== filters.target_id) {
+    return false;
+  }
+  if (filters.cluster_id && metaString(metadata, 'cluster_id') !== filters.cluster_id) {
+    return false;
+  }
+  if (filters.approval_request_id && metaString(metadata, 'approval_request_id') !== filters.approval_request_id) {
+    return false;
+  }
+  if (filters.batch !== undefined && metaNumber(metadata, 'batch') !== filters.batch) {
+    return false;
+  }
+  if (filters.dry_run !== undefined && metaBoolean(metadata, 'dry_run') !== filters.dry_run) {
+    return false;
+  }
+  if (filters.incident !== undefined && auditSummary(event).incident !== filters.incident) {
+    return false;
+  }
+  if (filters.rollback_failed !== undefined && auditRollbackFailed(event) !== filters.rollback_failed) {
     return false;
   }
   return true;
