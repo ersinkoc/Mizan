@@ -98,6 +98,7 @@ go run ./cmd/mizan validate --project <id> --target nginx
 go run ./cmd/mizan deploy --project <id> --target-id <target-id>
 go run ./cmd/mizan deploy --project <id> --cluster-id <cluster-id> --batch 1
 go run ./cmd/mizan deploy drill --summary
+go run ./cmd/mizan deploy drill --format text
 go run ./cmd/mizan approval request --project <id> --cluster-id <cluster-id> --batch 1
 go run ./cmd/mizan approval approve --project <id> --actor alice <approval-request-id>
 go run ./cmd/mizan approval approve --project <id> --actor bob <approval-request-id>
@@ -211,6 +212,12 @@ For a full step-by-step simulated failure report, run:
 
 ```sh
 go run ./cmd/mizan deploy drill
+```
+
+For a concise terminal summary, run:
+
+```sh
+go run ./cmd/mizan deploy drill --format text
 ```
 
 Workflow-only gate:

@@ -309,6 +309,13 @@ func TestProjectGenerateValidateAndSnapshotCommands(t *testing.T) {
 		t.Fatalf("deploy drill summary output unexpected: %s", stdout.String())
 	}
 	stdout.Reset()
+	if err := Run(context.Background(), []string{"deploy", "drill", "--format", "text"}, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(stdout.Bytes(), []byte("Mizan deploy drill: success")) || !bytes.Contains(stdout.Bytes(), []byte("cleanup attempted=4")) {
+		t.Fatalf("deploy drill text output unexpected: %s", stdout.String())
+	}
+	stdout.Reset()
 	if err := Run(context.Background(), []string{"monitor", "snapshot", "--home", home, "--project", created.Project.ID}, &stdout, &stderr); err != nil {
 		t.Fatal(err)
 	}
@@ -709,6 +716,8 @@ func TestCLIErrorBranches(t *testing.T) {
 	expectErr("deploy", "--home", home, "--project", "missing", "--target-id", "t_1", "--execute")
 	expectErr("deploy", "--home", home, "--project", "missing", "--target-id", "t_1", "--batch", "-1")
 	expectErr("deploy", "drill", "extra")
+	expectErr("deploy", "drill", "--format", "xml")
+	expectErr("deploy", "drill", "--summary", "--format", "text")
 	expectErr("audit")
 	expectErr("audit", "show", "--bad")
 	expectErr("audit", "show", "--home", home)

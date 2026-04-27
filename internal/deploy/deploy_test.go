@@ -485,6 +485,10 @@ func TestRunDrill(t *testing.T) {
 	if summary.Totals.RollbackAttempted != 2 || summary.Totals.RollbackSucceeded != 2 || summary.Totals.CleanupAttempted != 4 || summary.Totals.CleanupFailed != 1 {
 		t.Fatalf("unexpected drill summary totals: %+v", summary.Totals)
 	}
+	text := FormatDrillText(report)
+	if !strings.Contains(text, "Mizan deploy drill: success") || !strings.Contains(text, "cleanup attempted=4 succeeded=3 failed=1") || !strings.Contains(text, "probe_failure_rolls_back_and_cleans_tmp") {
+		t.Fatalf("unexpected drill text output:\n%s", text)
+	}
 	for _, scenario := range report.Scenarios {
 		if scenario.Status != "success" || len(scenario.Steps) == 0 || len(scenario.Commands) == 0 {
 			t.Fatalf("unexpected drill scenario: %+v", scenario)

@@ -164,6 +164,7 @@ mizan validate --project <id> --target haproxy
 mizan deploy --project <id> --target-id <target-id>
 mizan deploy --project <id> --cluster-id <cluster-id> --batch 1
 mizan deploy drill --summary
+mizan deploy drill --format text
 mizan approval request --project <id> --cluster-id <cluster-id> --batch 1
 mizan approval approve --project <id> --actor alice <approval-request-id>
 mizan approval approve --project <id> --actor bob <approval-request-id>
@@ -187,7 +188,7 @@ Recommended rollout loop:
 6. Run `mizan monitor snapshot --project <id>` after each batch before approving the next batch.
 7. Stop the rollout if monitor health regresses, audit entries look unexpected, or a rollback step appears in an executed run.
 
-`mizan deploy drill` is a local fault-injection smoke test. It does not SSH to real targets; it uses simulated runners to verify that remote validation failures skip install/reload and clean temporary config, install/probe failures attempt rollback and cleanup, and cleanup failures are surfaced as incident signals. Use `--summary` for CI/runbook gates and omit it when you need full simulated step output. Use it before staging drills, not as a replacement for staging drills against real HAProxy/Nginx hosts.
+`mizan deploy drill` is a local fault-injection smoke test. It does not SSH to real targets; it uses simulated runners to verify that remote validation failures skip install/reload and clean temporary config, install/probe failures attempt rollback and cleanup, and cleanup failures are surfaced as incident signals. Use `--summary` for CI/runbook gates, `--format text` for a concise operator-readable terminal report, and omit both when you need full simulated step output. Use it before staging drills, not as a replacement for staging drills against real HAProxy/Nginx hosts.
 
 Use `docs/STAGING-DRILLS.md` for the real-target drill checklist that validates HAProxy/Nginx host behavior before production rollout.
 

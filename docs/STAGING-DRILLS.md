@@ -10,6 +10,7 @@ Use these drills before the first production rollout and after meaningful deploy
 - Configure `post_reload_probe` or `monitor_endpoint` for every target.
 - Snapshot or back up remote config files before starting.
 - Run `mizan deploy drill --summary` locally first and require `status: success`.
+- Run `mizan deploy drill --format text` when an operator needs a quick human-readable terminal summary.
 
 Example rollback commands:
 

@@ -832,18 +832,22 @@ func deployDrillCmd(ctx context.Context, args []string, stdout, stderr io.Writer
 	fs := flag.NewFlagSet("deploy drill", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	summary := fs.Bool("summary", false, "write compact drill summary JSON")
+	format := fs.String("format", "json", "output format: json, summary, or text")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
 		return errors.New("deploy drill does not accept positional arguments")
 	}
-	report := deploy.RunDrill(ctx)
-	encoder := json.NewEncoder(stdout)
-	encoder.SetIndent("", "  ")
-	encoder.SetEscapeHTML(false)
 	if *summary {
-		if err := encoder.Encode(deploy.SummarizeDrill(report)); err != nil {
+		if *format != "json" && *format != "summary" {
+			return errors.New("--summary can only be combined with --format json or --format summary")
+		}
+		*format = "summary"
+	}
+	report := deploy.RunDrill(ctx)
+	if *format == "text" {
+		if _, err := io.WriteString(stdout, deploy.FormatDrillText(report)); err != nil {
 			return err
 		}
 		if report.Status != "success" {
@@ -851,8 +855,20 @@ func deployDrillCmd(ctx context.Context, args []string, stdout, stderr io.Writer
 		}
 		return nil
 	}
-	if err := encoder.Encode(report); err != nil {
-		return err
+	encoder := json.NewEncoder(stdout)
+	encoder.SetIndent("", "  ")
+	encoder.SetEscapeHTML(false)
+	switch *format {
+	case "json":
+		if err := encoder.Encode(report); err != nil {
+			return err
+		}
+	case "summary":
+		if err := encoder.Encode(deploy.SummarizeDrill(report)); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("invalid --format %q", *format)
 	}
 	if report.Status != "success" {
 		return errors.New("deploy drill failed")
@@ -1727,7 +1743,7 @@ Usage:
   mizan deploy --project <id> --target-id <target-id>
   mizan deploy --project <id> --cluster-id <cluster-id> [--batch 1]
   mizan deploy --project <id> --cluster-id <cluster-id> --execute --confirm-snapshot <snapshot_hash> --approved-by alice,bob
-  mizan deploy drill [--summary]
+  mizan deploy drill [--summary] [--format json|summary|text]
   mizan approval request --project <id> --cluster-id <cluster-id> [--batch 1]
   mizan approval approve --project <id> --actor alice <approval-request-id>
   mizan deploy --project <id> --approval-request-id <approval-request-id> --execute

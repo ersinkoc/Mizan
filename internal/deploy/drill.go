@@ -3,6 +3,7 @@ package deploy
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/mizanproxy/mizan/internal/ir"
@@ -123,6 +124,35 @@ func SummarizeDrill(report DrillReport) DrillSummary {
 		})
 	}
 	return summary
+}
+
+func FormatDrillText(report DrillReport) string {
+	summary := SummarizeDrill(report)
+	var b strings.Builder
+	_, _ = fmt.Fprintf(&b, "Mizan deploy drill: %s\n", summary.Status)
+	_, _ = fmt.Fprintf(&b, "scenarios=%d failed_scenarios=%d deployment_failures=%d\n", summary.Totals.Scenarios, summary.Totals.FailedScenarios, summary.Totals.DeploymentFailures)
+	_, _ = fmt.Fprintf(&b, "rollback attempted=%d succeeded=%d failed=%d\n", summary.Totals.RollbackAttempted, summary.Totals.RollbackSucceeded, summary.Totals.RollbackFailed)
+	_, _ = fmt.Fprintf(&b, "cleanup attempted=%d succeeded=%d failed=%d\n", summary.Totals.CleanupAttempted, summary.Totals.CleanupSucceeded, summary.Totals.CleanupFailed)
+	for _, scenario := range summary.Scenarios {
+		_, _ = fmt.Fprintf(
+			&b,
+			"- %s: check=%s deploy=%s steps=%d rollback=%d/%d/%d cleanup=%d/%d/%d\n",
+			scenario.Name,
+			scenario.Status,
+			scenario.DeploymentStatus,
+			scenario.StepCount,
+			scenario.Rollback.Attempted,
+			scenario.Rollback.Succeeded,
+			scenario.Rollback.Failed,
+			scenario.Cleanup.Attempted,
+			scenario.Cleanup.Succeeded,
+			scenario.Cleanup.Failed,
+		)
+		if scenario.Message != "" {
+			_, _ = fmt.Fprintf(&b, "  message: %s\n", scenario.Message)
+		}
+	}
+	return b.String()
 }
 
 func drillScenarios() []drillScenario {
