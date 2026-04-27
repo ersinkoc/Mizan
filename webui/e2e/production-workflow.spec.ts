@@ -82,6 +82,23 @@ test('operator can import, edit, validate, request approval, preview deploy, aud
   await expect(page.locator('.audit-list')).not.toContainText('deploy.run');
   await page.getByRole('button', { name: /All/ }).click();
 
+  const auditFilters = page.locator('form.audit-filters');
+  await auditFilters.getByLabel('Audit action prefix').fill('approval.');
+  await auditFilters.getByRole('button', { name: /Apply/ }).click();
+  await expect(page.locator('.audit-list')).toContainText('approval.request');
+  await expect(page.locator('.audit-list')).toContainText('approval.approve');
+  await expect(page.locator('.audit-list')).not.toContainText('deploy.run');
+
+  await auditFilters.getByRole('button', { name: /Reset/ }).click();
+  await auditFilters.getByLabel('Audit batch').fill('1');
+  await auditFilters.getByLabel('Audit dry-run').selectOption('true');
+  await auditFilters.getByRole('button', { name: /Apply/ }).click();
+  await expect(page.locator('.audit-list')).toContainText('deploy.run');
+  await expect(page.locator('.audit-list')).toContainText('batch 1');
+  await expect(page.locator('.audit-list')).toContainText('dry-run');
+  await expect(page.locator('.audit-list')).not.toContainText('approval.approve');
+  await auditFilters.getByRole('button', { name: /Reset/ }).click();
+
   await expect(page.locator('.monitor-panel')).toContainText('Unknown');
   await expect(page.locator('.audit-panel')).toContainText('Live');
 });
