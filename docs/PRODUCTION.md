@@ -22,7 +22,7 @@ Current build baseline:
 | Go module/toolchain | `go 1.25.0` with `go1.25.9` toolchain |
 | Docker build image | `golang:1.26.2-alpine` |
 | WebUI dependencies | React 19, TypeScript 6.0, Vite 8 |
-| GitHub Actions | `checkout@v6`, `setup-go@v6`, `setup-node@v6`, `upload-artifact@v7` |
+| GitHub Actions | `checkout@v6`, `setup-go@v6`, `setup-node@v6`, `upload-artifact@v7`, `download-artifact@v8.0.1` |
 | Workflow lint | `actionlint v1.7.12` |
 
 The boundaries below are intentional v0.1 scope limits, not open blockers for the current release.

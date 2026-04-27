@@ -13,7 +13,7 @@ Current engineering baseline:
 | Go module/toolchain | `go 1.25.0` with `go1.25.9` toolchain |
 | Docker build image | `golang:1.26.2-alpine` |
 | WebUI dependencies | React 19, TypeScript 6.0, Vite 8, lucide-react 1.11 |
-| GitHub Actions | `checkout@v6`, `setup-go@v6`, `setup-node@v6`, `upload-artifact@v7` |
+| GitHub Actions | `checkout@v6`, `setup-go@v6`, `setup-node@v6`, `upload-artifact@v7`, `download-artifact@v8.0.1` |
 
 ```mermaid
 flowchart LR

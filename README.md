@@ -118,7 +118,7 @@ Current build baseline:
 | Area | Baseline |
 |---|---|
 | Go module/toolchain | `go 1.25.0` with `go1.25.9` toolchain |
-| CI/release actions | `checkout@v6`, `setup-go@v6`, `setup-node@v6`, `upload-artifact@v7` |
+| CI/release actions | `checkout@v6`, `setup-go@v6`, `setup-node@v6`, `upload-artifact@v7`, `download-artifact@v8.0.1` |
 | Container builder | `golang:1.26.2-alpine` |
 | WebUI stack | React 19, TypeScript 6.0, Vite 8 |
 | Workflow lint | `actionlint v1.7.12` |
