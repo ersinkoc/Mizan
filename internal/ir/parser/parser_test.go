@@ -54,6 +54,7 @@ func TestParseNginx(t *testing.T) {
 	cfg := `
 events {}
 http {
+  proxy_cache_path /var/cache/nginx keys_zone=edge_cache:10m max_size=2g inactive=60m use_temp_path=off;
   upstream be_app {
     least_conn;
     server 10.0.0.1:8080 weight=90;
@@ -74,6 +75,12 @@ http {
 	}
 	if got := len(model.Backends); got != 1 {
 		t.Fatalf("backends=%d", got)
+	}
+	if got := len(model.Caches); got != 1 {
+		t.Fatalf("caches=%d", got)
+	}
+	if cache := model.Caches[0]; cache.Path != "/var/cache/nginx" || cache.Zone != "edge_cache" || cache.MaxSize != "2g" {
+		t.Fatalf("unexpected cache policy: %+v", cache)
 	}
 	if model.Backends[0].Algorithm != "leastconn" {
 		t.Fatalf("algorithm=%q", model.Backends[0].Algorithm)
@@ -119,6 +126,7 @@ func TestNginxRoundTripPreservesCoreIR(t *testing.T) {
 	cfg := `
 events {}
 http {
+  proxy_cache_path /var/cache/nginx keys_zone=edge_cache:10m max_size=2g inactive=60m use_temp_path=off;
   upstream be_app {
     least_conn;
     server 10.0.0.1:8080 weight=90 max_conns=250;
@@ -191,6 +199,7 @@ backend be_other
 
 	nginxCfg := `
 http {
+  proxy_cache_path /var/cache/nozone inactive=30m;
   upstream be_app {
     server 10.0.0.1:8080; # primary
   }
@@ -211,6 +220,9 @@ http {
 	}
 	if nginxModel.Servers[0].Port != 8080 || nginxModel.Frontends[0].Bind != "127.0.0.1:8081" {
 		t.Fatalf("expected Nginx inline comment/listen normalization, got bind=%q servers=%+v", nginxModel.Frontends[0].Bind, nginxModel.Servers)
+	}
+	if cache := nginxModel.Caches[0]; cache.Path != "/var/cache/nozone" || cache.Zone == "" || cache.ID == "" {
+		t.Fatalf("expected fallback Nginx cache zone, got %+v", cache)
 	}
 }
 
@@ -393,6 +405,9 @@ func assertCoreRoundTrip(t *testing.T, original, roundTrip *ir.Model) {
 	if got, want := healthSignature(roundTrip), healthSignature(original); got != want {
 		t.Fatalf("health signature changed:\noriginal=%s\ngot=%s", want, got)
 	}
+	if got, want := cacheSignature(roundTrip), cacheSignature(original); got != want {
+		t.Fatalf("cache signature changed:\noriginal=%s\ngot=%s", want, got)
+	}
 }
 
 func backendSignature(m *ir.Model) string {
@@ -445,6 +460,15 @@ func healthSignature(m *ir.Model) string {
 	parts := make([]string, 0, len(m.HealthChecks))
 	for _, hc := range m.HealthChecks {
 		parts = append(parts, fmt.Sprintf("%s|%s|%v|%d|%d|%d|%d", hc.ID, hc.Type, hc.ExpectedStatus, hc.IntervalMS, hc.TimeoutMS, hc.Rise, hc.Fall))
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, ";")
+}
+
+func cacheSignature(m *ir.Model) string {
+	parts := make([]string, 0, len(m.Caches))
+	for _, cache := range m.Caches {
+		parts = append(parts, fmt.Sprintf("%s|%s|%s", cache.Zone, cache.Path, cache.MaxSize))
 	}
 	sort.Strings(parts)
 	return strings.Join(parts, ";")

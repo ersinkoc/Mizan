@@ -60,6 +60,9 @@ func ParseNginx(config string) (*ir.Model, error) {
 			stack = append(stack, nginxContext{Kind: fields[0], Name: ""})
 		default:
 			ctx := currentNginxContext(stack)
+			if ctx.Kind == "http" {
+				parseNginxHTTPLine(m, fields)
+			}
 			if ctx.Kind == "upstream" {
 				idx, ok := backendIndex[ctx.Name]
 				if ok {
@@ -103,6 +106,31 @@ func trimNginxSemicolon(fields []string) []string {
 		}
 	}
 	return out
+}
+
+func parseNginxHTTPLine(m *ir.Model, fields []string) {
+	if fields[0] != "proxy_cache_path" || len(fields) < 2 {
+		return
+	}
+	cache := ir.CachePolicy{Path: fields[1], MaxSize: ""}
+	for _, field := range fields[2:] {
+		switch {
+		case strings.HasPrefix(field, "keys_zone="):
+			zone := strings.TrimPrefix(field, "keys_zone=")
+			if name, _, ok := strings.Cut(zone, ":"); ok {
+				zone = name
+			}
+			cache.Zone = zone
+		case strings.HasPrefix(field, "max_size="):
+			cache.MaxSize = strings.TrimPrefix(field, "max_size=")
+		}
+	}
+	if cache.Zone == "" {
+		cache.Zone = normalizeID("cache", cache.Path)
+	}
+	cache.ID = normalizeID("cache", cache.Zone)
+	cache.Name = cache.Zone
+	m.Caches = append(m.Caches, cache)
 }
 
 func parseNginxUpstreamLine(m *ir.Model, be *ir.Backend, fields []string) {

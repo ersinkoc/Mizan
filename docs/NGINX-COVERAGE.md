@@ -6,12 +6,12 @@ Implemented in v0:
 - `upstream` blocks with weighted servers and `max_conns`
 - `server` blocks with port-only or address-qualified `listen`, TLS certificate directives, and basic HTTP/2
 - `location` blocks with `proxy_pass`
-- `proxy_cache_path` for cache policies
+- `proxy_cache_path` for cache policies, including `keys_zone` and `max_size`
 - Bracketed IPv6 upstream servers and listeners
 - Quoted directive values, including TLS paths that contain spaces or `#`
 - Nested context tracking for supported directives inside `http`, `server`, and `location` blocks
 - Full-line and whitespace-prefixed inline comments in imported configs
-- Core parser/generator/parser round-trip coverage for upstreams, TLS cert/key paths, HTTP/2, routing, weighted servers, max connections, and default backends
+- Core parser/generator/parser round-trip coverage for upstreams, TLS cert/key paths, HTTP/2, routing, weighted servers, max connections, cache policies, and default backends
 
 Not yet complete:
 
