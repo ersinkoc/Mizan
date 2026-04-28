@@ -10,8 +10,8 @@ Implemented in v0:
 - Bracketed IPv6 bind/server endpoints
 - Quoted directive values, including certificate paths and ACL values that contain spaces or `#`
 - Full-line and whitespace-prefixed inline comments in imported configs
-- Opaque backend lines for unsupported backend directives such as `option redispatch`, `http-reuse`, and `stick-table`
-- Core parser/generator/parser round-trip coverage for frontends, backends, TLS certs, routing, servers, weights, max connections, health check timing, and opaque backend directives
+- Opaque frontend/backend lines for unsupported directives such as `option forwardfor`, `http-request`, `redirect`, `option redispatch`, `http-reuse`, and `stick-table`
+- Core parser/generator/parser round-trip coverage for frontends, backends, TLS certs, routing, servers, weights, max connections, health check timing, and opaque frontend/backend directives
 
 Not yet complete:
 

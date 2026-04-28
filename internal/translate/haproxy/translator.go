@@ -57,6 +57,13 @@ func Generate(m *ir.Model) translate.Result {
 				lines.WriteString(fmt.Sprintf("  use_backend %s if %s\n", rule.Action.BackendID, acl))
 			}
 		}
+		for _, ob := range m.OpaqueBlocks {
+			if matchesHAProxySection(ob.Section, "frontend", fe.ID, fe.Name) {
+				for _, opaqueLine := range ob.Lines {
+					lines.WriteString("  " + opaqueLine + "\n")
+				}
+			}
+		}
 		if fe.DefaultBackend != "" {
 			lines.WriteString("  default_backend " + fe.DefaultBackend + "\n")
 		}
@@ -105,7 +112,7 @@ func Generate(m *ir.Model) translate.Result {
 			lines.WriteByte('\n')
 		}
 		for _, ob := range m.OpaqueBlocks {
-			if ob.Section == "backend "+be.ID {
+			if matchesHAProxySection(ob.Section, "backend", be.ID, be.Name) {
 				for _, opaqueLine := range ob.Lines {
 					lines.WriteString("  " + opaqueLine + "\n")
 				}
@@ -130,6 +137,17 @@ func safeName(id, name string) string {
 		return strings.NewReplacer(" ", "_", "-", "_").Replace(name)
 	}
 	return id
+}
+
+func matchesHAProxySection(section, kind, id, name string) bool {
+	candidates := map[string]bool{
+		kind + " " + id:                 true,
+		kind + " " + safeName(id, name): true,
+	}
+	if name != "" {
+		candidates[kind+" "+name] = true
+	}
+	return candidates[section]
 }
 
 func haproxyMode(protocol string) string {

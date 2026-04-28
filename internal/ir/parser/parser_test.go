@@ -18,6 +18,9 @@ frontend web
   mode http
   acl api path_beg /api/
   use_backend be_api if api
+  option forwardfor
+  http-request set-header X-Forwarded-Proto https
+  redirect scheme https if !{ ssl_fc }
   default_backend be_app
 
 backend be_app

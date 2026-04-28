@@ -125,6 +125,8 @@ func parseHAProxyFrontendLine(m *ir.Model, fe *ir.Frontend, fields []string, rul
 		if len(fields) > 1 {
 			fe.DefaultBackend = fields[1]
 		}
+	default:
+		appendHAProxyOpaqueFrontendLine(m, fe, fields)
 	}
 }
 
@@ -175,11 +177,18 @@ func parseHAProxyBackendLine(m *ir.Model, be *ir.Backend, fields []string) {
 	}
 }
 
+func appendHAProxyOpaqueFrontendLine(m *ir.Model, fe *ir.Frontend, fields []string) {
+	appendHAProxyOpaqueLine(m, "frontend "+fe.Name, fe.ID, fields)
+}
+
 func appendHAProxyOpaqueBackendLine(m *ir.Model, be *ir.Backend, fields []string) {
+	appendHAProxyOpaqueLine(m, "backend "+be.ID, be.ID, fields)
+}
+
+func appendHAProxyOpaqueLine(m *ir.Model, section, anchor string, fields []string) {
 	if len(fields) == 0 {
 		return
 	}
-	section := "backend " + be.ID
 	for i := range m.OpaqueBlocks {
 		if m.OpaqueBlocks[i].Section == section {
 			m.OpaqueBlocks[i].Lines = append(m.OpaqueBlocks[i].Lines, strings.Join(fields, " "))
@@ -187,10 +196,10 @@ func appendHAProxyOpaqueBackendLine(m *ir.Model, be *ir.Backend, fields []string
 		}
 	}
 	m.OpaqueBlocks = append(m.OpaqueBlocks, ir.OpaqueBlock{
-		ID:      normalizeID("opaque", be.ID),
+		ID:      normalizeID("opaque", anchor),
 		Section: section,
 		Lines:   []string{strings.Join(fields, " ")},
-		Anchor:  be.ID,
+		Anchor:  anchor,
 	})
 }
 
